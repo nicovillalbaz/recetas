@@ -1,0 +1,12 @@
+.data
+.env
+.env*
+.git
+.next
+coverage
+node_modules
+npm-debug.log*
+out
+tmp
+*.tsbuildinfo
+Captura de pantalla*.png

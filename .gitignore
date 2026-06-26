@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+/tmp/
 
 # next.js
 /.next/
@@ -19,6 +20,9 @@
 
 # production
 /build
+
+# local prescription storage
+/.data/
 
 # misc
 .DS_Store
