@@ -28,6 +28,21 @@ type CreatedPrescription = {
   pdfUrl: string;
 };
 
+type GhlContact = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  documentId: string;
+  birthDate: string;
+  insurance: string;
+};
+
+type GhlContactSearchResponse = {
+  contacts?: GhlContact[];
+  error?: string;
+};
+
 const signatureLines = [
   "EN CORIA A 20/06/2026",
   "Fdo : Dra Durán Caballero, María del Sol",
@@ -40,6 +55,7 @@ export default function PrescriptionApp() {
   const params = useSearchParams();
   const locationId = params.get("locationId") || params.get("location_id") || "";
   const contactId = params.get("contactId") || params.get("contact_id") || "";
+  const [selectedContactId, setSelectedContactId] = useState(contactId);
   const [doctor, setDoctor] = useState<DoctorProfile>(defaultDoctorProfile);
   const [patient, setPatient] = useState<PatientProfile>({
     ...emptyPatientProfile,
@@ -59,6 +75,12 @@ export default function PrescriptionApp() {
       params.get("contact.phone") ||
       "",
   });
+  const [contactSearch, setContactSearch] = useState(
+    patient.name || patient.email || patient.phone,
+  );
+  const [contactResults, setContactResults] = useState<GhlContact[]>([]);
+  const [isSearchingContacts, setIsSearchingContacts] = useState(false);
+  const [contactSearchError, setContactSearchError] = useState("");
   const [prescription, setPrescription] = useState<PrescriptionDetails>({
     ...emptyPrescriptionDetails,
     freeText:
@@ -79,12 +101,12 @@ export default function PrescriptionApp() {
         createdAt: new Date().toISOString(),
         expiresAt: getDefaultExpiryDate(),
         locationId,
-        contactId,
+        contactId: selectedContactId,
         doctor,
         patient,
         prescription,
       }),
-    [contactId, doctor, locationId, patient, prescription],
+    [doctor, locationId, patient, prescription, selectedContactId],
   );
   const validationErrors = validatePrescriptionPayload(draftPayload);
   const visibleErrors = serverErrors.length > 0 ? serverErrors : validationErrors;
@@ -107,6 +129,53 @@ export default function PrescriptionApp() {
       },
     }).then(setQrImage);
   }, [created]);
+
+  useEffect(() => {
+    const query = contactSearch.trim();
+
+    if (query.length < 2) {
+      setContactResults([]);
+      setContactSearchError("");
+      setIsSearchingContacts(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setIsSearchingContacts(true);
+      setContactSearchError("");
+
+      try {
+        const response = await fetch(
+          `/api/ghl/contacts?q=${encodeURIComponent(query)}`,
+          { signal: controller.signal },
+        );
+        const data = (await response.json()) as GhlContactSearchResponse;
+
+        if (!response.ok) {
+          setContactResults([]);
+          setContactSearchError(
+            data.error || "No se pudieron cargar los contactos de GHL.",
+          );
+          return;
+        }
+
+        setContactResults(data.contacts || []);
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") {
+          setContactResults([]);
+          setContactSearchError("No se pudieron cargar los contactos de GHL.");
+        }
+      } finally {
+        setIsSearchingContacts(false);
+      }
+    }, 350);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [contactSearch]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -198,14 +267,61 @@ export default function PrescriptionApp() {
         <section className="form-column" aria-label="Formulario de receta">
           <fieldset>
             <legend>Paciente</legend>
+            <div className="contact-picker">
+              <label className="field">
+                <span>Buscar paciente en GHL</span>
+                <input
+                  type="search"
+                  value={contactSearch}
+                  placeholder="Nombre, email o teléfono"
+                  onChange={(event) => setContactSearch(event.target.value)}
+                />
+              </label>
+              {(isSearchingContacts ||
+                contactResults.length > 0 ||
+                contactSearchError ||
+                selectedContactId) && (
+                <div className="contact-search-panel">
+                  {isSearchingContacts && (
+                    <p className="contact-search-status">Buscando...</p>
+                  )}
+                  {contactSearchError && (
+                    <p className="contact-search-error">{contactSearchError}</p>
+                  )}
+                  {contactResults.length > 0 && (
+                    <div className="contact-results">
+                      {contactResults.map((contact) => (
+                        <button
+                          className="contact-result"
+                          key={contact.id || `${contact.name}-${contact.phone}`}
+                          type="button"
+                          onClick={() => selectContact(contact)}
+                        >
+                          <span className="contact-result-main">
+                            {contact.name || "Sin nombre"}
+                          </span>
+                          <span className="contact-result-meta">
+                            {[
+                              contact.email || "sin email",
+                              contact.phone,
+                              contact.documentId,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {selectedContactId && (
+                    <p className="contact-selected">
+                      Contacto GHL: {selectedContactId}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="grid two">
-              <TextField
-                label="Email del paciente"
-                value={patient.email}
-                required
-                type="email"
-                onChange={(value) => updatePatient("email", value)}
-              />
               <TextField
                 label="Nombre y dos apellidos"
                 value={patient.name}
@@ -224,6 +340,12 @@ export default function PrescriptionApp() {
                 required
                 type="date"
                 onChange={(value) => updatePatient("birthDate", value)}
+              />
+              <TextField
+                label="Email del paciente (opcional)"
+                value={patient.email}
+                type="email"
+                onChange={(value) => updatePatient("email", value)}
               />
               <TextField
                 label="Teléfono"
@@ -357,7 +479,7 @@ export default function PrescriptionApp() {
               </p>
               <p>
                 <span>Email:</span>
-                {patient.email || "email@paciente.com"}
+                {patient.email || "No informado"}
               </p>
             </section>
 
@@ -440,6 +562,23 @@ export default function PrescriptionApp() {
       </form>
     </main>
   );
+
+  function selectContact(contact: GhlContact) {
+    setCreated(null);
+    setServerErrors([]);
+    setSelectedContactId(contact.id || "");
+    setPatient({
+      name: contact.name || "",
+      documentId: contact.documentId || "",
+      birthDate: contact.birthDate || "",
+      email: contact.email || "",
+      phone: contact.phone || "",
+      insurance: contact.insurance || "",
+    });
+    setContactSearch(contact.name || contact.email || contact.phone || "");
+    setContactResults([]);
+    setContactSearchError("");
+  }
 
   function updateDoctor(key: keyof DoctorProfile, value: string) {
     setCreated(null);

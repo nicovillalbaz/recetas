@@ -94,7 +94,7 @@ export default async function VerifyPrescriptionPage({
         <dl className="verify-grid">
           <div>
             <dt>Email paciente</dt>
-            <dd>{maskEmail(record.payload.patient.email)}</dd>
+            <dd>{maskEmail(record.payload.patient.email) || "No informado"}</dd>
           </div>
           <div>
             <dt>Prescriptora</dt>

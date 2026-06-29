@@ -176,6 +176,68 @@ legend {
   box-shadow: 0 0 0 3px rgba(15, 48, 47, 0.12);
 }
 
+.contact-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.contact-search-panel {
+  background: #fbfcfb;
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.contact-results {
+  display: grid;
+  gap: 7px;
+}
+
+.contact-result {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--foreground);
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  min-height: 58px;
+  padding: 10px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.contact-result:hover,
+.contact-result:focus {
+  border-color: var(--brand);
+  outline: none;
+}
+
+.contact-result-main {
+  font-size: 14px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.contact-result-meta,
+.contact-search-status,
+.contact-selected {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.contact-search-error {
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  margin: 0;
+}
+
 .primary-button,
 .secondary-button,
 .danger-button,
