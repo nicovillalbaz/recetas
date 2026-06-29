@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { deflateSync, inflateSync } from "node:zlib";
+import QRCode from "qrcode";
 import {
   type PatientProfile,
   type PrescriptionRecord,
@@ -58,15 +59,14 @@ const signatureLines = [
   "76012671V",
 ];
 
-export function createPrescriptionPdf(
+export async function createPrescriptionPdf(
   record: PrescriptionRecord,
   verificationUrl: string,
 ) {
-  void verificationUrl;
-
   const page = new PdfCanvas();
+  const qrImage = await createVerificationQrImage(verificationUrl);
 
-  drawPrescriptionPage(page, record);
+  drawPrescriptionPage(page, record, qrImage);
 
   return {
     fileName: createPdfFileName(record.payload),
@@ -74,7 +74,11 @@ export function createPrescriptionPdf(
   };
 }
 
-function drawPrescriptionPage(page: PdfCanvas, record: PrescriptionRecord) {
+function drawPrescriptionPage(
+  page: PdfCanvas,
+  record: PrescriptionRecord,
+  qrImage: PdfImageResource | null,
+) {
   page.fillColor(1, 1, 1);
   page.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT, "f");
 
@@ -82,6 +86,7 @@ function drawPrescriptionPage(page: PdfCanvas, record: PrescriptionRecord) {
   drawPatientBlock(page, record.payload.patient);
   drawPrescriptionText(page, getPrescriptionText(record.payload.prescription));
   drawSignature(page);
+  drawVerificationQr(page, qrImage);
   drawFooter(page);
 }
 
@@ -171,6 +176,24 @@ function drawSignature(page: PdfCanvas) {
   });
 }
 
+function drawVerificationQr(page: PdfCanvas, qrImage: PdfImageResource | null) {
+  if (!qrImage) {
+    return;
+  }
+
+  page.addImage(qrImage);
+
+  const size = 74;
+  const x = PAGE_WIDTH - CONTENT_X - size;
+  const y = 97;
+
+  page.drawImage(qrImage.name, x, y, size, size);
+  page.textCentered(x + size / 2, y - 12, "Verificación QR", {
+    size: 7.5,
+    color: MUTED,
+  });
+}
+
 function drawFooter(page: PdfCanvas) {
   page.textCentered(
     PAGE_WIDTH / 2,
@@ -244,6 +267,24 @@ function drawLogoMark(page: PdfCanvas, centerX: number, baselineY: number) {
 
   page.fillColor(...BRAND);
   page.ellipse(centerX - 11, baselineY + 57, 12, 12, "f");
+}
+
+async function createVerificationQrImage(verificationUrl: string) {
+  try {
+    const qrBuffer = await QRCode.toBuffer(verificationUrl, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      scale: 8,
+      color: {
+        dark: "#111111",
+        light: "#ffffff",
+      },
+    });
+
+    return decodePngForPdf(qrBuffer, "ImVerificationQr");
+  } catch {
+    return null;
+  }
 }
 
 function buildPdf(pages: PdfPage[]) {

@@ -31,7 +31,7 @@ export async function GET(
   }
 
   const verificationUrl = buildVerificationUrl(record, getPublicOrigin(request));
-  const pdf = createPrescriptionPdf(record, verificationUrl);
+  const pdf = await createPrescriptionPdf(record, verificationUrl);
 
   return new NextResponse(pdf.buffer, {
     headers: {
