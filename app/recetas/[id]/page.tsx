@@ -71,15 +71,19 @@ export default async function VerifyPrescriptionPage({
           <div>
             <span>Paciente</span>
             <strong>{record.payload.patient.name}</strong>
-            <small>{maskDocumentId(record.payload.patient.documentId)}</small>
+            {record.payload.patient.documentId && (
+              <small>{maskDocumentId(record.payload.patient.documentId)}</small>
+            )}
           </div>
           <div>
             <span>Receta</span>
             <strong>{prescriptionSummary || "Receta médica"}</strong>
             <small>
-              {hasSignedPdf
-                ? "PDF firmado disponible"
-                : "PDF generado pendiente de firma"}
+              {isActive
+                ? hasSignedPdf
+                  ? "PDF firmado disponible"
+                  : "PDF generado pendiente de firma"
+                : `Receta ${statusCopy[status].toLowerCase()}`}
             </small>
           </div>
           <div>
@@ -97,10 +101,24 @@ export default async function VerifyPrescriptionPage({
         )}
 
         <dl className="verify-grid">
-          <div>
-            <dt>Email paciente</dt>
-            <dd>{maskEmail(record.payload.patient.email) || "No informado"}</dd>
-          </div>
+          {record.payload.patient.documentId && (
+            <div>
+              <dt>DNI/NIE paciente</dt>
+              <dd>{maskDocumentId(record.payload.patient.documentId)}</dd>
+            </div>
+          )}
+          {record.payload.patient.birthDate && (
+            <div>
+              <dt>Fecha de nacimiento</dt>
+              <dd>{formatDate(record.payload.patient.birthDate)}</dd>
+            </div>
+          )}
+          {record.payload.patient.email && (
+            <div>
+              <dt>Email paciente</dt>
+              <dd>{maskEmail(record.payload.patient.email)}</dd>
+            </div>
+          )}
           <div>
             <dt>Prescriptora</dt>
             <dd>{record.payload.doctor.name}</dd>
@@ -134,12 +152,16 @@ export default async function VerifyPrescriptionPage({
         </dl>
 
         <div className="verify-actions">
-          {isActive && (
-            <Link className="verify-button" href={pdfUrl} target="_blank">
-              {hasSignedPdf ? "Abrir PDF firmado" : "Abrir PDF de la receta"}
-            </Link>
+          {isActive ? (
+            <>
+              <Link className="verify-button" href={pdfUrl} target="_blank">
+                {hasSignedPdf ? "Abrir PDF firmado" : "Abrir PDF de la receta"}
+              </Link>
+              <span>{hasSignedPdf ? "PDF firmado" : "Firma pendiente"}</span>
+            </>
+          ) : (
+            <span>Receta {statusCopy[status].toLowerCase()}</span>
           )}
-          <span>{hasSignedPdf ? "PDF firmado" : "Firma pendiente"}</span>
         </div>
 
       </section>

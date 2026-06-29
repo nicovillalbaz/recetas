@@ -44,6 +44,16 @@ type GhlContactSearchResponse = {
   error?: string;
 };
 
+type GhlContactDetailResponse = {
+  contact?: GhlContact;
+  error?: string;
+};
+
+type SendPatientPdfResponse = {
+  sent?: boolean;
+  errors?: string[];
+};
+
 type SignatureMethod = "autofirma" | "browser-p12" | "external" | "";
 type SignatureDialogMode = "create" | "sign-existing";
 
@@ -168,6 +178,7 @@ export default function PrescriptionApp() {
   );
   const [contactResults, setContactResults] = useState<GhlContact[]>([]);
   const [isSearchingContacts, setIsSearchingContacts] = useState(false);
+  const [isLoadingContactDetails, setIsLoadingContactDetails] = useState(false);
   const [contactSearchError, setContactSearchError] = useState("");
   const [prescription, setPrescription] = useState<PrescriptionDetails>({
     ...emptyPrescriptionDetails,
@@ -183,7 +194,9 @@ export default function PrescriptionApp() {
   const [isAutoSigning, setIsAutoSigning] = useState(false);
   const [isBrowserSigning, setIsBrowserSigning] = useState(false);
   const [isUploadingSignedPdf, setIsUploadingSignedPdf] = useState(false);
+  const [isSendingPatientPdf, setIsSendingPatientPdf] = useState(false);
   const [autoSignStatus, setAutoSignStatus] = useState("");
+  const [patientSendStatus, setPatientSendStatus] = useState("");
   const [serverErrors, setServerErrors] = useState<string[]>([]);
   const [isSignatureDialogOpen, setIsSignatureDialogOpen] = useState(false);
   const [signatureDialogMode, setSignatureDialogMode] =
@@ -262,6 +275,54 @@ export default function PrescriptionApp() {
       },
     }).then(setQrImage);
   }, [created]);
+
+  useEffect(() => {
+    if (!contactId) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const fallbackContact: GhlContact = {
+      id: contactId,
+      name:
+        params.get("name") ||
+        params.get("patientName") ||
+        params.get("contact.name") ||
+        "",
+      email:
+        params.get("email") ||
+        params.get("patientEmail") ||
+        params.get("contact.email") ||
+        "",
+      phone:
+        params.get("phone") ||
+        params.get("patientPhone") ||
+        params.get("contact.phone") ||
+        "",
+      documentId: "",
+      birthDate: "",
+      insurance: "",
+    };
+
+    setIsLoadingContactDetails(true);
+
+    fetchGhlContactDetail(contactId, controller.signal)
+      .then((contact) => {
+        applyContact(mergeGhlContact(contact, fallbackContact));
+      })
+      .catch((error) => {
+        if ((error as Error).name !== "AbortError") {
+          setContactSearchError("No se pudo cargar el contacto de GHL.");
+        }
+      })
+      .finally(() => {
+        setIsLoadingContactDetails(false);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [contactId, params]);
 
   useEffect(() => {
     const query = contactSearch.trim();
@@ -457,6 +518,41 @@ export default function PrescriptionApp() {
     }
   }
 
+  async function sendSignedPdfToPatient(target: CreatedPrescription) {
+    if (!target.record.signedPdf) {
+      setServerErrors(["Firma primero el PDF antes de enviarlo al paciente."]);
+      return;
+    }
+
+    setIsSendingPatientPdf(true);
+    setPatientSendStatus("");
+    setServerErrors([]);
+
+    try {
+      const response = await fetch(
+        `/api/recetas/${target.record.id}/send-patient`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ token: target.record.token }),
+        },
+      );
+      const data = (await response.json()) as SendPatientPdfResponse;
+
+      if (!response.ok || !data.sent) {
+        setServerErrors(data.errors || ["No se pudo enviar al paciente."]);
+        return;
+      }
+
+      setPatientSendStatus("Enviado al paciente por SMS.");
+    } finally {
+      setIsSendingPatientPdf(false);
+      window.setTimeout(() => setPatientSendStatus(""), 2400);
+    }
+  }
+
   async function signPrescriptionWithAutoFirma(target: CreatedPrescription) {
     setIsAutoSigning(true);
     setServerErrors([]);
@@ -590,7 +686,9 @@ export default function PrescriptionApp() {
                           className="contact-result"
                           key={contact.id || `${contact.name}-${contact.phone}`}
                           type="button"
-                          onClick={() => selectContact(contact)}
+                          onClick={() => {
+                            void selectContact(contact);
+                          }}
                         >
                           <span className="contact-result-main">
                             {contact.name || "Sin nombre"}
@@ -610,7 +708,9 @@ export default function PrescriptionApp() {
                   )}
                   {selectedContactId && (
                     <p className="contact-selected">
-                      Contacto GHL: {selectedContactId}
+                      {isLoadingContactDetails
+                        ? "Cargando datos del contacto..."
+                        : `Contacto GHL: ${selectedContactId}`}
                     </p>
                   )}
                 </div>
@@ -626,13 +726,11 @@ export default function PrescriptionApp() {
               <TextField
                 label="DNI / NIE"
                 value={patient.documentId}
-                required
                 onChange={(value) => updatePatient("documentId", value)}
               />
               <TextField
                 label="Fecha de nacimiento"
                 value={patient.birthDate}
-                required
                 type="date"
                 onChange={(value) => updatePatient("birthDate", value)}
               />
@@ -759,18 +857,24 @@ export default function PrescriptionApp() {
                 <span>Paciente:</span>
                 {patient.name || "Nombre y apellidos"}
               </p>
-              <p>
-                <span>DNI/NIE:</span>
-                {patient.documentId || "Documento"}
-              </p>
-              <p>
-                <span>Fecha de nacimiento:</span>
-                {patient.birthDate ? formatDate(patient.birthDate) : "dd/mm/aaaa"}
-              </p>
-              <p>
-                <span>Email:</span>
-                {patient.email || "No informado"}
-              </p>
+              {patient.documentId && (
+                <p>
+                  <span>DNI/NIE:</span>
+                  {patient.documentId}
+                </p>
+              )}
+              {patient.birthDate && (
+                <p>
+                  <span>Fecha de nacimiento:</span>
+                  {formatDate(patient.birthDate)}
+                </p>
+              )}
+              {patient.email && (
+                <p>
+                  <span>Email:</span>
+                  {patient.email}
+                </p>
+              )}
             </section>
 
             <section className="preview-recipe-text">
@@ -819,75 +923,102 @@ export default function PrescriptionApp() {
                   >
                     Verificar
                   </a>
-                  <a
-                    className="secondary-button"
-                    href={getGeneratedPdfUrl(created.pdfUrl)}
-                    target="_blank"
-                    download={createPdfFileName(created.record.payload)}
-                  >
-                    PDF base
-                  </a>
+                  {created.record.status !== "cancelled" && (
+                    <a
+                      className="secondary-button"
+                      href={getGeneratedPdfUrl(created.pdfUrl)}
+                      target="_blank"
+                      download={createPdfFileName(created.record.payload)}
+                    >
+                      PDF base
+                    </a>
+                  )}
                 </div>
-                <div className="signed-pdf-panel">
-                  <div>
-                    <p className="signed-pdf-title">
-                      {created.record.signedPdf
-                        ? "PDF firmado cargado"
-                        : "PDF firmado pendiente"}
-                    </p>
-                    <span>
-                      {created.record.signedPdf
-                        ? created.record.signedPdf.fileName
-                        : "Firma con AutoFirma o sube aqui el PDF firmado."}
-                    </span>
-                  </div>
-                  {!created.record.signedPdf && (
-                    <div className="signature-method-actions">
-                      <button
-                        className="primary-button compact-action"
-                        disabled={isSigning || isUploadingSignedPdf}
-                        type="button"
-                        onClick={() => signPrescriptionWithAutoFirma(created)}
-                      >
-                        {isAutoSigning ? "Firmando..." : "Firmar con AutoFirma"}
-                      </button>
-                      <button
-                        className="secondary-button compact-action"
-                        disabled={isSigning || isUploadingSignedPdf}
-                        type="button"
-                        onClick={() => {
-                          updateSignatureSecurity("browser-p12");
-                          setSignatureDialogMode("sign-existing");
-                          setIsSignatureDialogOpen(true);
-                        }}
-                      >
-                        {isBrowserSigning ? "Firmando..." : "Firmar con .p12"}
-                      </button>
+                {created.record.status !== "cancelled" && (
+                  <div className="signed-pdf-panel">
+                    <div>
+                      <p className="signed-pdf-title">
+                        {created.record.signedPdf
+                          ? "PDF firmado cargado"
+                          : "PDF firmado pendiente"}
+                      </p>
+                      <span>
+                        {created.record.signedPdf
+                          ? created.record.signedPdf.fileName
+                          : "Firma con AutoFirma o sube aqui el PDF firmado."}
+                      </span>
                     </div>
-                  )}
-                  {autoSignStatus && (
-                    <p className="signature-inline-status">{autoSignStatus}</p>
-                  )}
-                  <label className="upload-signed-pdf">
-                    <input
-                      accept="application/pdf,.pdf"
-                      disabled={isUploadingSignedPdf || isSigning}
-                      type="file"
-                      onChange={(event) => {
-                        void uploadSignedPdf(event.target.files?.[0]);
-                        event.target.value = "";
-                      }}
-                    />
-                    {isUploadingSignedPdf ? "Subiendo..." : "Subir PDF firmado"}
-                  </label>
-                  <a
-                    className="secondary-button"
-                    href={created.pdfUrl}
-                    target="_blank"
-                  >
-                    {created.record.signedPdf ? "Abrir PDF firmado" : "PDF actual"}
-                  </a>
-                </div>
+                    {!created.record.signedPdf && (
+                      <div className="signature-method-actions">
+                        <button
+                          className="primary-button compact-action"
+                          disabled={isSigning || isUploadingSignedPdf}
+                          type="button"
+                          onClick={() => signPrescriptionWithAutoFirma(created)}
+                        >
+                          {isAutoSigning ? "Firmando..." : "Firmar con AutoFirma"}
+                        </button>
+                        <button
+                          className="secondary-button compact-action"
+                          disabled={isSigning || isUploadingSignedPdf}
+                          type="button"
+                          onClick={() => {
+                            updateSignatureSecurity("browser-p12");
+                            setSignatureDialogMode("sign-existing");
+                            setIsSignatureDialogOpen(true);
+                          }}
+                        >
+                          {isBrowserSigning ? "Firmando..." : "Firmar con .p12"}
+                        </button>
+                      </div>
+                    )}
+                    {autoSignStatus && (
+                      <p className="signature-inline-status">{autoSignStatus}</p>
+                    )}
+                    {patientSendStatus && (
+                      <p className="signature-inline-status">
+                        {patientSendStatus}
+                      </p>
+                    )}
+                    <label className="upload-signed-pdf">
+                      <input
+                        accept="application/pdf,.pdf"
+                        disabled={isUploadingSignedPdf || isSigning}
+                        type="file"
+                        onChange={(event) => {
+                          void uploadSignedPdf(event.target.files?.[0]);
+                          event.target.value = "";
+                        }}
+                      />
+                      {isUploadingSignedPdf ? "Subiendo..." : "Subir PDF firmado"}
+                    </label>
+                    <a
+                      className="secondary-button"
+                      href={created.pdfUrl}
+                      target="_blank"
+                    >
+                      {created.record.signedPdf
+                        ? "Abrir PDF firmado"
+                        : "PDF actual"}
+                    </a>
+                    {created.record.signedPdf && (
+                      <button
+                        className="primary-button"
+                        disabled={
+                          isSendingPatientPdf ||
+                          isSigning ||
+                          isUploadingSignedPdf
+                        }
+                        type="button"
+                        onClick={() => sendSignedPdfToPatient(created)}
+                      >
+                        {isSendingPatientPdf
+                          ? "Enviando..."
+                          : "Enviar a paciente"}
+                      </button>
+                    )}
+                  </div>
+                )}
                 {created.record.status !== "cancelled" && (
                   <button
                     className="danger-button"
@@ -1054,9 +1185,30 @@ export default function PrescriptionApp() {
     </main>
   );
 
-  function selectContact(contact: GhlContact) {
+  async function selectContact(contact: GhlContact) {
     setCreated(null);
     setServerErrors([]);
+    applyContact(contact);
+    setContactResults([]);
+    setContactSearchError("");
+
+    if (!contact.id) {
+      return;
+    }
+
+    setIsLoadingContactDetails(true);
+
+    try {
+      const detail = await fetchGhlContactDetail(contact.id);
+      applyContact(mergeGhlContact(detail, contact));
+    } catch {
+      setContactSearchError("No se pudo cargar la ficha completa de GHL.");
+    } finally {
+      setIsLoadingContactDetails(false);
+    }
+  }
+
+  function applyContact(contact: GhlContact) {
     setSelectedContactId(contact.id || "");
     setPatient({
       name: contact.name || "",
@@ -1067,8 +1219,6 @@ export default function PrescriptionApp() {
       insurance: contact.insurance || "",
     });
     setContactSearch(contact.name || contact.email || contact.phone || "");
-    setContactResults([]);
-    setContactSearchError("");
   }
 
   function updateDoctor(key: keyof DoctorProfile, value: string) {
@@ -1138,6 +1288,35 @@ export default function PrescriptionApp() {
     await generatePrescription({ signatureMethod });
   }
 
+}
+
+async function fetchGhlContactDetail(contactId: string, signal?: AbortSignal) {
+  const response = await fetch(
+    `/api/ghl/contacts/${encodeURIComponent(contactId)}`,
+    { signal },
+  );
+  const data = (await response.json()) as GhlContactDetailResponse;
+
+  if (!response.ok || !data.contact) {
+    throw new Error(data.error || "No se pudo cargar el contacto de GHL.");
+  }
+
+  return data.contact;
+}
+
+function mergeGhlContact(
+  primary: GhlContact,
+  fallback: GhlContact,
+): GhlContact {
+  return {
+    id: primary.id || fallback.id,
+    name: primary.name || fallback.name,
+    email: primary.email || fallback.email,
+    phone: primary.phone || fallback.phone,
+    documentId: primary.documentId || fallback.documentId,
+    birthDate: primary.birthDate || fallback.birthDate,
+    insurance: primary.insurance || fallback.insurance,
+  };
 }
 
 function getGeneratedPdfUrl(

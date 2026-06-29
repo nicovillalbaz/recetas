@@ -61,6 +61,26 @@ export async function getGhlContact(contactId: string) {
   return contact || null;
 }
 
+export async function sendGhlSmsToContact(contactId: string, message: string) {
+  const cleanContactId = contactId.trim();
+  const cleanMessage = message.trim();
+
+  if (!cleanContactId || !cleanMessage) {
+    throw new Error("Faltan el contacto o el mensaje para enviar el SMS.");
+  }
+
+  const config = getGhlConfig();
+
+  return fetchGhlJson("/conversations/messages", {
+    method: "POST",
+    body: JSON.stringify({
+      type: "SMS",
+      contactId: cleanContactId,
+      message: cleanMessage,
+    }),
+  }, config);
+}
+
 async function searchContactsWithPost(config: GhlConfig, query: string) {
   const response = await fetchGhlJson("/contacts/search", {
     method: "POST",
@@ -220,6 +240,8 @@ function readCustomFieldSource(source: unknown, kind: ContactFieldKind) {
         getString(item.value) ||
         getString(item.fieldValue) ||
         getString(item.field_value) ||
+        getString(item.fieldValueString) ||
+        getString(item.field_value_string) ||
         getString(item.values);
 
       if (value) {
@@ -240,7 +262,11 @@ function readCustomFieldSource(source: unknown, kind: ContactFieldKind) {
     }
 
     const value = isRecord(rawValue)
-      ? getString(rawValue.value) || getString(rawValue.fieldValue)
+      ? getString(rawValue.value) ||
+        getString(rawValue.fieldValue) ||
+        getString(rawValue.field_value) ||
+        getString(rawValue.fieldValueString) ||
+        getString(rawValue.field_value_string)
       : getString(rawValue);
 
     if (value) {
@@ -279,12 +305,13 @@ function getConfiguredFieldKeys(kind: ContactFieldKind) {
     documentId: [
       process.env.GHL_PATIENT_DOCUMENT_FIELD_ID || "",
       process.env.GHL_PATIENT_DNI_FIELD_ID || "",
+      process.env.GHL_PATIENT_NIF_FIELD_ID || "",
     ],
     birthDate: [process.env.GHL_PATIENT_BIRTH_DATE_FIELD_ID || ""],
     insurance: [process.env.GHL_PATIENT_INSURANCE_FIELD_ID || ""],
   };
 
-  return envMap[kind].filter(Boolean);
+  return envMap[kind].flatMap(splitConfiguredKeys).filter(Boolean);
 }
 
 function getFieldAliases(kind: ContactFieldKind) {
@@ -343,6 +370,13 @@ function normalizeLookupText(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+}
+
+function splitConfiguredKeys(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function getGhlConfig(): GhlConfig {

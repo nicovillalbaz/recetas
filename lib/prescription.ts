@@ -183,8 +183,6 @@ export function validatePrescriptionPayload(payload: PrescriptionPayload) {
   const errors: string[] = [];
   const requiredChecks: Array<[string, string]> = [
     [payload.patient.name, "Nombre y dos apellidos del paciente"],
-    [payload.patient.documentId, "DNI/NIE del paciente"],
-    [payload.patient.birthDate, "Fecha de nacimiento del paciente"],
     [getPrescriptionText(payload.prescription), "Receta"],
     [payload.doctor.name, "Nombre de la doctora"],
     [payload.doctor.specialty, "Especialidad"],
