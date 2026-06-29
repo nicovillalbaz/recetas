@@ -49,6 +49,12 @@ type GhlContactDetailResponse = {
   error?: string;
 };
 
+type PrescriptionLookupResponse =
+  | CreatedPrescription
+  | {
+      errors?: string[];
+    };
+
 type SendPatientPdfResponse = {
   sent?: boolean;
   errors?: string[];
@@ -162,6 +168,16 @@ export default function PrescriptionApp() {
   const params = useSearchParams();
   const locationId = params.get("locationId") || params.get("location_id") || "";
   const contactId = params.get("contactId") || params.get("contact_id") || "";
+  const signRecordId =
+    params.get("signRecordId") ||
+    params.get("recordId") ||
+    params.get("prescriptionId") ||
+    "";
+  const signRecordToken =
+    params.get("signToken") ||
+    params.get("recordToken") ||
+    params.get("token") ||
+    "";
   const [selectedContactId, setSelectedContactId] = useState(contactId);
   const [doctor, setDoctor] = useState<DoctorProfile>(defaultDoctorProfile);
   const [patient, setPatient] = useState<PatientProfile>({
@@ -207,6 +223,7 @@ export default function PrescriptionApp() {
   const [autoSignStatus, setAutoSignStatus] = useState("");
   const [patientSendStatus, setPatientSendStatus] = useState("");
   const [serverErrors, setServerErrors] = useState<string[]>([]);
+  const [isLoadingPrescription, setIsLoadingPrescription] = useState(false);
   const [isSignatureDialogOpen, setIsSignatureDialogOpen] = useState(false);
   const [signatureDialogMode, setSignatureDialogMode] =
     useState<SignatureDialogMode>("create");
@@ -286,6 +303,51 @@ export default function PrescriptionApp() {
       },
     }).then(setQrImage);
   }, [created]);
+
+  useEffect(() => {
+    if (!signRecordId || !signRecordToken) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    setIsLoadingPrescription(true);
+    setServerErrors([]);
+
+    fetchPrescriptionRecord(signRecordId, signRecordToken, controller.signal)
+      .then((loaded) => {
+        setCreated(loaded);
+        setDoctor(loaded.record.payload.doctor);
+        setPatient(loaded.record.payload.patient);
+        setPrescription(loaded.record.payload.prescription);
+        setSelectedContactId(loaded.record.contactId || "");
+        setContactSearch(
+          loaded.record.payload.patient.name ||
+            loaded.record.payload.patient.email ||
+            loaded.record.payload.patient.phone ||
+            "",
+        );
+        setAutoSignStatus(
+          "Receta cargada en ventana externa. Pulsa Firmar con AutoFirma para continuar.",
+        );
+      })
+      .catch((error) => {
+        if ((error as Error).name !== "AbortError") {
+          setServerErrors([
+            error instanceof Error
+              ? error.message
+              : "No se pudo cargar la receta para firmar.",
+          ]);
+        }
+      })
+      .finally(() => {
+        setIsLoadingPrescription(false);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [signRecordId, signRecordToken]);
 
   useEffect(() => {
     if (!contactId) {
@@ -433,6 +495,13 @@ export default function PrescriptionApp() {
     }
 
     if (createdPrescription && signatureMethod === "autofirma") {
+      if (isEmbeddedInFrame()) {
+        setAutoSignStatus(
+          "Receta generada. Pulsa Firmar con AutoFirma para abrir la ventana externa.",
+        );
+        return;
+      }
+
       await signPrescriptionWithAutoFirma(createdPrescription);
     }
 
@@ -565,6 +634,27 @@ export default function PrescriptionApp() {
   }
 
   async function signPrescriptionWithAutoFirma(target: CreatedPrescription) {
+    if (isEmbeddedInFrame()) {
+      const opened = window.open(
+        buildStandaloneAutoFirmaUrl(target),
+        "_blank",
+        "noopener,noreferrer",
+      );
+
+      if (!opened) {
+        setServerErrors([
+          "Chrome bloqueo la ventana externa de AutoFirma. Permite ventanas emergentes para esta web y vuelve a intentarlo.",
+        ]);
+        return;
+      }
+
+      setAutoSignStatus(
+        "Se abrio una ventana externa para firmar con AutoFirma fuera de GHL.",
+      );
+      window.setTimeout(() => setAutoSignStatus(""), 5000);
+      return;
+    }
+
     setIsAutoSigning(true);
     setServerErrors([]);
     setAutoSignStatus("Preparando PDF base para AutoFirma...");
@@ -852,7 +942,9 @@ export default function PrescriptionApp() {
 
           <div className="form-actions">
             <button className="primary-button" type="submit" disabled={!canGenerate}>
-              {isSaving || isAutoSigning ? "Procesando..." : "Generar receta y QR"}
+              {isSaving || isAutoSigning || isLoadingPrescription
+                ? "Procesando..."
+                : "Generar receta y QR"}
             </button>
           </div>
         </section>
@@ -1315,6 +1407,29 @@ async function fetchGhlContactDetail(contactId: string, signal?: AbortSignal) {
   return data.contact;
 }
 
+async function fetchPrescriptionRecord(
+  recordId: string,
+  token: string,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(
+    `/api/recetas/${encodeURIComponent(recordId)}?token=${encodeURIComponent(token)}`,
+    { signal },
+  );
+  const data = (await response.json()) as PrescriptionLookupResponse;
+
+  if (!response.ok || !("record" in data)) {
+    const message =
+      "errors" in data && data.errors?.length
+        ? data.errors[0]
+        : "No se pudo cargar la receta para firmar.";
+
+    throw new Error(message);
+  }
+
+  return data;
+}
+
 function mergeGhlContact(
   primary: GhlContact,
   fallback: GhlContact,
@@ -1359,6 +1474,25 @@ function getGeneratedPdfUrl(
 
 function createSignedPdfFileName(payload: PrescriptionPayload) {
   return createPdfFileName(payload).replace(/\.pdf$/i, "-firmado.pdf");
+}
+
+function buildStandaloneAutoFirmaUrl(target: CreatedPrescription) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("signRecordId", target.record.id);
+  url.searchParams.set("signToken", target.record.token);
+  url.searchParams.delete("contactId");
+  url.searchParams.delete("contact_id");
+  url.searchParams.delete("token");
+
+  return url.toString();
+}
+
+function isEmbeddedInFrame() {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
 }
 
 async function signPdfWithAutoFirma(
