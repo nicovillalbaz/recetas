@@ -257,10 +257,6 @@ export default function PrescriptionApp() {
         <div>
           <p className="eyebrow">Durán Ginecología</p>
         </div>
-        <div className="location-chip">
-          <span>Ubicación GHL</span>
-          <strong>{locationId || "Sin ubicación"}</strong>
-        </div>
       </section>
 
       <form className="workspace" onSubmit={handleSubmit}>

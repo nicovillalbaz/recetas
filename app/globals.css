@@ -75,24 +75,9 @@ a {
   text-transform: uppercase;
 }
 
-.location-chip {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  display: grid;
-  gap: 4px;
-  min-width: 205px;
-  padding: 14px 16px;
-}
-
-.location-chip span,
 .qr-meta {
   color: var(--muted);
   font-size: 12px;
-}
-
-.location-chip strong {
-  font-size: 14px;
-  overflow-wrap: anywhere;
 }
 
 .workspace {
