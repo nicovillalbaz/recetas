@@ -197,10 +197,7 @@ function normalizeContact(contact: JsonRecord): GhlContactSummary {
       getString(contact.nie) ||
       getCustomFieldValue(contact, "documentId"),
     birthDate: normalizeDateInput(
-      getString(contact.birthDate) ||
-        getString(contact.dateOfBirth) ||
-        getString(contact.dob) ||
-        getCustomFieldValue(contact, "birthDate"),
+      getContactBirthDate(contact) || getCustomFieldValue(contact, "birthDate"),
     ),
     insurance:
       getString(contact.insurance) ||
@@ -208,6 +205,17 @@ function normalizeContact(contact: JsonRecord): GhlContactSummary {
       getString(contact.aseguradora) ||
       getCustomFieldValue(contact, "insurance"),
   };
+}
+
+function getContactBirthDate(contact: JsonRecord) {
+  return (
+    getString(contact.dateOfBirth) ||
+    getString(contact.birthDate) ||
+    getString(contact.birthday) ||
+    getString(contact.dob) ||
+    getString(contact.date_of_birth) ||
+    getString(contact.birth_date)
+  );
 }
 
 function getCustomFieldValue(contact: JsonRecord, kind: ContactFieldKind) {
