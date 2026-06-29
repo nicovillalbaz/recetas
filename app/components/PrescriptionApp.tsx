@@ -79,6 +79,7 @@ type AutoScriptApi = {
   setAppName?: (name: string) => void;
   setKeyStore?: (keyStore?: string | null) => void;
   setLocale?: (locale: string) => void;
+  setPortRange?: (minPort: number, maxPort: number) => void;
   setServiceTimeout?: (timeoutMs: number) => void;
   setStickySignatory?: (sticky: boolean) => void;
   selectCertificate?: (
@@ -1508,6 +1509,7 @@ function configureAutoFirmaClient() {
   );
   autoScript.setLocale?.("es_ES");
   autoScript.setAppName?.("Duran Ginecologia");
+  autoScript.setPortRange?.(54580, 54582);
   autoScript.setServiceTimeout?.(120000);
   autoScript.enableProgressDialog?.(false);
   window.SupportDialog?.enableLoadingDialog?.(false);
