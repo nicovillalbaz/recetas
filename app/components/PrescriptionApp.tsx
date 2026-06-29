@@ -451,9 +451,11 @@ export default function PrescriptionApp() {
             </div>
           )}
 
-          <button className="primary-button" type="submit" disabled={!canGenerate}>
-            {isSaving ? "Generando..." : "Generar receta y QR"}
-          </button>
+          <div className="form-actions">
+            <button className="primary-button" type="submit" disabled={!canGenerate}>
+              {isSaving ? "Generando..." : "Generar receta y QR"}
+            </button>
+          </div>
         </section>
 
         <aside className="preview-column" aria-label="Vista previa">
