@@ -19,7 +19,6 @@ GHL_PATIENT_DOCUMENT_FIELD_ID=lF4RWq25UPi4mdqnbrx9,ojop67QjbwNC7Kw1uyLu
 GHL_PATIENT_DNI_FIELD_ID=lF4RWq25UPi4mdqnbrx9
 GHL_PATIENT_NIF_FIELD_ID=ojop67QjbwNC7Kw1uyLu
 GHL_PATIENT_BIRTH_DATE_FIELD_ID=
-GHL_PATIENT_INSURANCE_FIELD_ID=id_del_campo_mutua
 ```
 
 La fecha de cumpleaÃ±os/nacimiento llega desde el campo estÃ¡ndar de GHL

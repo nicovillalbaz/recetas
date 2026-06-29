@@ -66,6 +66,8 @@ type SignatureSecurityState = {
 const SIGNATURE_SECURITY_STORAGE_KEY = "duran.signatureSecurity";
 
 type AutoScriptApi = {
+  AUTOFIRMA_CONNECTION_RETRIES?: number;
+  AUTOFIRMA_LAUNCHING_TIME?: number;
   KEYSTORE_APPLE?: string;
   KEYSTORE_MOZILLA?: string;
   KEYSTORE_WINDOWS?: string;
@@ -137,6 +139,11 @@ type ForgeModule = {
 declare global {
   interface Window {
     AutoScript?: AutoScriptApi;
+    SupportDialog?: {
+      enableSupportDialog?: (isEnabled: boolean) => void;
+      enableLoadingDialog?: (isEnabled: boolean) => void;
+      enableErrorDialog?: (isEnabled: boolean) => void;
+    };
     duranAutoScriptLoading?: Promise<void>;
   }
 }
@@ -1374,7 +1381,9 @@ async function signPdfWithAutoFirma(
   autoScript.setStickySignatory(true);
 
   try {
-    updateStatus("Seleccionando certificado real en AutoFirma...");
+    updateStatus(
+      "Cuando Chrome lo pida, permite abrir AutoFirma y selecciona el certificado.",
+    );
     const certificateB64 = await selectCertificateWithAutoFirma(autoScript);
     const digitalSignatureStamp =
       await createDigitalSignatureStampFromCertificateB64(certificateB64);
@@ -1395,7 +1404,7 @@ async function signPdfWithAutoFirma(
       throw new Error("El PDF base esta vacio.");
     }
 
-    updateStatus("Firmando con el certificado seleccionado...");
+    updateStatus("Firmando con el certificado seleccionado en AutoFirma...");
     const pdfB64 = await blobToBase64(pdfBlob);
     const signedPdfB64 = await signBase64WithAutoFirma(autoScript, pdfB64);
     const signedPdfBlob = base64ToPdfBlob(signedPdfB64);
@@ -1502,10 +1511,21 @@ function configureAutoFirmaClient() {
 
   const keyStore = getPreferredAutoFirmaKeyStore(autoScript);
 
+  autoScript.AUTOFIRMA_LAUNCHING_TIME = Math.max(
+    autoScript.AUTOFIRMA_LAUNCHING_TIME || 0,
+    5000,
+  );
+  autoScript.AUTOFIRMA_CONNECTION_RETRIES = Math.max(
+    autoScript.AUTOFIRMA_CONNECTION_RETRIES || 0,
+    30,
+  );
   autoScript.setLocale?.("es_ES");
   autoScript.setAppName?.("Duran Ginecologia");
   autoScript.setServiceTimeout?.(120000);
-  autoScript.enableProgressDialog?.(true);
+  autoScript.enableProgressDialog?.(false);
+  window.SupportDialog?.enableLoadingDialog?.(false);
+  window.SupportDialog?.enableErrorDialog?.(false);
+  window.SupportDialog?.enableSupportDialog?.(false);
   autoScript.cargarAppAfirma(undefined, keyStore);
 
   if (keyStore) {
