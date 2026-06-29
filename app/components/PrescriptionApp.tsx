@@ -64,6 +64,7 @@ type SignatureSecurityState = {
 };
 
 const SIGNATURE_SECURITY_STORAGE_KEY = "duran.signatureSecurity";
+const AUTOFIRMA_OPERATION_TIMEOUT_MS = 180000;
 
 type AutoScriptApi = {
   AUTOFIRMA_CONNECTION_RETRIES?: number;
@@ -1372,52 +1373,38 @@ async function signPdfWithAutoFirma(
   await loadAutoScript();
   const autoScript = configureAutoFirmaClient();
 
-  if (!autoScript.selectCertificate || !autoScript.setStickySignatory) {
-    throw new Error(
-      "Esta version de AutoFirma no permite fijar el certificado antes de firmar.",
-    );
+  updateStatus("Descargando PDF base para firmar...");
+  const pdfResponse = await fetch(getGeneratedPdfUrl(pdfUrl), {
+    cache: "no-store",
+  });
+
+  if (!pdfResponse.ok) {
+    throw new Error("No se pudo descargar el PDF base para firmarlo.");
   }
 
-  autoScript.setStickySignatory(true);
+  const pdfBlob = await pdfResponse.blob();
 
-  try {
-    updateStatus(
-      "Cuando Chrome lo pida, permite abrir AutoFirma y selecciona el certificado.",
-    );
-    const certificateB64 = await selectCertificateWithAutoFirma(autoScript);
-    const digitalSignatureStamp =
-      await createDigitalSignatureStampFromCertificateB64(certificateB64);
-
-    updateStatus("Descargando PDF con los datos del certificado...");
-    const pdfResponse = await fetch(
-      getGeneratedPdfUrl(pdfUrl, { digitalSignatureStamp }),
-      { cache: "no-store" },
-    );
-
-    if (!pdfResponse.ok) {
-      throw new Error("No se pudo descargar el PDF base para firmarlo.");
-    }
-
-    const pdfBlob = await pdfResponse.blob();
-
-    if (pdfBlob.size === 0) {
-      throw new Error("El PDF base esta vacio.");
-    }
-
-    updateStatus("Firmando con el certificado seleccionado en AutoFirma...");
-    const pdfB64 = await blobToBase64(pdfBlob);
-    const signedPdfB64 = await signBase64WithAutoFirma(autoScript, pdfB64);
-    const signedPdfBlob = base64ToPdfBlob(signedPdfB64);
-    const header = await signedPdfBlob.slice(0, 5).text();
-
-    if (!header.startsWith("%PDF-")) {
-      throw new Error("AutoFirma no devolvio un PDF firmado valido.");
-    }
-
-    return new File([signedPdfBlob], fileName, { type: "application/pdf" });
-  } finally {
-    autoScript.setStickySignatory(false);
+  if (pdfBlob.size === 0) {
+    throw new Error("El PDF base esta vacio.");
   }
+
+  updateStatus(
+    "Cuando Chrome lo pida, permite abrir AutoFirma y completa la firma.",
+  );
+  const pdfB64 = await blobToBase64(pdfBlob);
+  const signedPdfB64 = await withTimeout(
+    signBase64WithAutoFirma(autoScript, pdfB64),
+    AUTOFIRMA_OPERATION_TIMEOUT_MS,
+    "AutoFirma no respondio despues de 3 minutos. Cierra AutoFirma/OpenJDK desde el administrador de tareas, restaura la instalacion desde AutoFirma y vuelve a intentarlo.",
+  );
+  const signedPdfBlob = base64ToPdfBlob(signedPdfB64);
+  const header = await signedPdfBlob.slice(0, 5).text();
+
+  if (!header.startsWith("%PDF-")) {
+    throw new Error("AutoFirma no devolvio un PDF firmado valido.");
+  }
+
+  return new File([signedPdfBlob], fileName, { type: "application/pdf" });
 }
 
 async function signPdfWithBrowserCertificate(
@@ -1535,33 +1522,6 @@ function configureAutoFirmaClient() {
   return autoScript;
 }
 
-function selectCertificateWithAutoFirma(autoScript: AutoScriptApi) {
-  if (!autoScript.selectCertificate) {
-    throw new Error("AutoFirma no permite seleccionar el certificado.");
-  }
-
-  return new Promise<string>((resolve, reject) => {
-    autoScript.selectCertificate?.(
-      null,
-      (certificateB64) => {
-        if (!certificateB64) {
-          reject(new Error("AutoFirma no devolvio el certificado seleccionado."));
-          return;
-        }
-
-        resolve(certificateB64);
-      },
-      (errorType, errorMessage) =>
-        reject(
-          new Error(
-            [errorType, errorMessage].filter(Boolean).join(": ") ||
-              "AutoFirma cancelo la seleccion del certificado.",
-          ),
-        ),
-    );
-  });
-}
-
 function signBase64WithAutoFirma(autoScript: AutoScriptApi, pdfB64: string) {
   return new Promise<string>((resolve, reject) => {
     autoScript.sign(
@@ -1578,6 +1538,29 @@ function signBase64WithAutoFirma(autoScript: AutoScriptApi, pdfB64: string) {
           ),
         ),
     );
+  });
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+) {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = window.setTimeout(
+      () => reject(new Error(timeoutMessage)),
+      timeoutMs,
+    );
+
+    promise
+      .then((value) => {
+        window.clearTimeout(timeout);
+        resolve(value);
+      })
+      .catch((error) => {
+        window.clearTimeout(timeout);
+        reject(error);
+      });
   });
 }
 
@@ -1598,16 +1581,6 @@ function getPreferredAutoFirmaKeyStore(autoScript: AutoScriptApi) {
   }
 
   return null;
-}
-
-async function createDigitalSignatureStampFromCertificateB64(
-  certificateB64: string,
-): Promise<DigitalSignatureStamp> {
-  const forge = await loadForge();
-  const der = forge.util.decode64(normalizeCertificateBase64(certificateB64));
-  const cert = forge.pki.certificateFromAsn1(forge.asn1.fromDer(der));
-
-  return createDigitalSignatureStampFromCertificate(cert);
 }
 
 async function createDigitalSignatureStampFromP12(
@@ -1709,16 +1682,6 @@ function cleanCertificateText(value: unknown) {
     .slice(0, 120);
 }
 
-function normalizeCertificateBase64(value: string) {
-  let normalized = value.replace(/\s/g, "").replace(/-/g, "+").replace(/_/g, "/");
-
-  while (normalized.length % 4 !== 0) {
-    normalized += "=";
-  }
-
-  return normalized;
-}
-
 function binaryStringFromBytes(bytes: Uint8Array) {
   let binary = "";
   const chunkSize = 8192;
@@ -1734,14 +1697,26 @@ function binaryStringFromBytes(bytes: Uint8Array) {
 
 function getAutoFirmaErrorMessage(error: unknown) {
   const autoScript = window.AutoScript;
-  const autoFirmaMessage = autoScript?.getErrorMessage?.();
-  const autoFirmaCode = autoScript?.getErrorCode?.();
+  const autoFirmaMessage = readAutoFirmaDiagnostic(() =>
+    autoScript?.getErrorMessage?.(),
+  );
+  const autoFirmaCode = readAutoFirmaDiagnostic(() =>
+    autoScript?.getErrorCode?.(),
+  );
   const rawMessage = error instanceof Error ? error.message : String(error || "");
   const details = [autoFirmaCode, autoFirmaMessage || rawMessage]
     .filter(Boolean)
     .join(" ");
 
   return `No se pudo firmar con AutoFirma.${details ? ` ${details}` : ""}`;
+}
+
+function readAutoFirmaDiagnostic(readValue: () => string | undefined) {
+  try {
+    return readValue();
+  } catch {
+    return "";
+  }
 }
 
 function getBrowserCertificateErrorMessage(error: unknown) {
