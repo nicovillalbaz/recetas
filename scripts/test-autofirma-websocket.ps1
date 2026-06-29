@@ -1,5 +1,5 @@
 param(
-  [int[]]$Ports = @(54580, 54581, 54582),
+  [int[]]$Ports = @(54580),
   [int]$WaitSeconds = 20
 )
 

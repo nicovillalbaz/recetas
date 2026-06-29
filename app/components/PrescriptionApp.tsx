@@ -237,6 +237,8 @@ export default function PrescriptionApp() {
   );
   const validationErrors = validatePrescriptionPayload(draftPayload);
   const visibleErrors = serverErrors.length > 0 ? serverErrors : validationErrors;
+  const visibleErrorsTitle =
+    serverErrors.length > 0 ? "No se pudo completar la operacion" : "Faltan datos obligatorios";
   const isSigning = isAutoSigning || isBrowserSigning;
   const canGenerate =
     validationErrors.length === 0 && !isSaving && !isSigning;
@@ -839,7 +841,7 @@ export default function PrescriptionApp() {
 
           {visibleErrors.length > 0 && (
             <div className="validation-panel">
-              <strong>Faltan datos obligatorios</strong>
+              <strong>{visibleErrorsTitle}</strong>
               <ul>
                 {visibleErrors.map((error) => (
                   <li key={error}>{error}</li>
@@ -1509,7 +1511,7 @@ function configureAutoFirmaClient() {
   );
   autoScript.setLocale?.("es_ES");
   autoScript.setAppName?.("Duran Ginecologia");
-  autoScript.setPortRange?.(54580, 54582);
+  autoScript.setPortRange?.(54580, 54580);
   autoScript.setServiceTimeout?.(120000);
   autoScript.enableProgressDialog?.(false);
   window.SupportDialog?.enableLoadingDialog?.(false);
