@@ -63,7 +63,14 @@ export type PrescriptionRecord = {
   cancelledAt?: string;
   locationId: string;
   contactId: string;
+  signedPdf?: SignedPrescriptionPdf;
   payload: PrescriptionPayload;
+};
+
+export type SignedPrescriptionPdf = {
+  fileName: string;
+  uploadedAt: string;
+  size: number;
 };
 
 export const defaultDoctorProfile: DoctorProfile = {

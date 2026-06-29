@@ -49,6 +49,7 @@ export default async function VerifyPrescriptionPage({
   const status = getEffectivePrescriptionStatus(record);
   const pdfUrl = buildPrescriptionPdfUrl(record, getPublicOrigin());
   const isActive = status === "active";
+  const hasSignedPdf = Boolean(record.signedPdf);
   const prescriptionText = getPrescriptionText(record.payload.prescription);
   const prescriptionSummary = prescriptionText.split(/\r?\n/).find(Boolean);
 
@@ -75,7 +76,11 @@ export default async function VerifyPrescriptionPage({
           <div>
             <span>Receta</span>
             <strong>{prescriptionSummary || "Receta médica"}</strong>
-            <small>Contenido disponible en el PDF verificado</small>
+            <small>
+              {hasSignedPdf
+                ? "PDF firmado disponible"
+                : "PDF generado pendiente de firma"}
+            </small>
           </div>
           <div>
             <span>Validez</span>
@@ -122,10 +127,6 @@ export default async function VerifyPrescriptionPage({
             <dt>Web</dt>
             <dd>{record.payload.doctor.website}</dd>
           </div>
-          <div>
-            <dt>Identidad de firma</dt>
-            <dd>{record.payload.doctor.signatureIdentity}</dd>
-          </div>
           <div className="verify-grid-wide">
             <dt>Receta</dt>
             <dd>{prescriptionText}</dd>
@@ -135,10 +136,10 @@ export default async function VerifyPrescriptionPage({
         <div className="verify-actions">
           {isActive && (
             <Link className="verify-button" href={pdfUrl} target="_blank">
-              Abrir PDF de la receta
+              {hasSignedPdf ? "Abrir PDF firmado" : "Abrir PDF de la receta"}
             </Link>
           )}
-          <span>Token verificado</span>
+          <span>{hasSignedPdf ? "PDF firmado" : "Firma pendiente"}</span>
         </div>
 
       </section>

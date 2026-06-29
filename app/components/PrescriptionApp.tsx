@@ -43,6 +43,43 @@ type GhlContactSearchResponse = {
   error?: string;
 };
 
+type SignatureSecurityState = {
+  method: "autofirma" | "external" | "";
+  certificateFileName: string;
+  certificateRegisteredAt: string;
+};
+
+const SIGNATURE_SECURITY_STORAGE_KEY = "duran.signatureSecurity";
+
+type AutoScriptApi = {
+  KEYSTORE_APPLE?: string;
+  KEYSTORE_MOZILLA?: string;
+  KEYSTORE_WINDOWS?: string;
+  cargarAppAfirma: (clientAddress?: string, keyStore?: string | null) => void;
+  enableProgressDialog?: (showDialog: boolean) => void;
+  getErrorCode?: () => string;
+  getErrorMessage?: () => string;
+  setAppName?: (name: string) => void;
+  setKeyStore?: (keyStore?: string | null) => void;
+  setLocale?: (locale: string) => void;
+  setServiceTimeout?: (timeoutMs: number) => void;
+  sign: (
+    dataB64: string,
+    algorithm: string,
+    format: string,
+    params: string | null,
+    successCallback: (signatureB64: string, certificateB64?: string) => void,
+    errorCallback: (errorType?: string, errorMessage?: string) => void,
+  ) => void;
+};
+
+declare global {
+  interface Window {
+    AutoScript?: AutoScriptApi;
+    duranAutoScriptLoading?: Promise<void>;
+  }
+}
+
 const signatureLines = [
   "EN CORIA A 20/06/2026",
   "Fdo : Dra Durán Caballero, María del Sol",
@@ -92,7 +129,17 @@ export default function PrescriptionApp() {
   const [created, setCreated] = useState<CreatedPrescription | null>(null);
   const [qrImage, setQrImage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isAutoSigning, setIsAutoSigning] = useState(false);
+  const [isUploadingSignedPdf, setIsUploadingSignedPdf] = useState(false);
+  const [autoSignStatus, setAutoSignStatus] = useState("");
   const [serverErrors, setServerErrors] = useState<string[]>([]);
+  const [isSignatureDialogOpen, setIsSignatureDialogOpen] = useState(false);
+  const [signatureSecurity, setSignatureSecurity] =
+    useState<SignatureSecurityState>({
+      method: "autofirma",
+      certificateFileName: "",
+      certificateRegisteredAt: "",
+    });
 
   const draftPayload = useMemo<PrescriptionPayload>(
     () =>
@@ -110,8 +157,33 @@ export default function PrescriptionApp() {
   );
   const validationErrors = validatePrescriptionPayload(draftPayload);
   const visibleErrors = serverErrors.length > 0 ? serverErrors : validationErrors;
-  const canGenerate = validationErrors.length === 0 && !isSaving;
+  const canGenerate =
+    validationErrors.length === 0 && !isSaving && !isAutoSigning;
   const previewPrescription = getPrescriptionText(prescription);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(SIGNATURE_SECURITY_STORAGE_KEY);
+
+    if (!stored) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as SignatureSecurityState;
+      setSignatureSecurity({
+        method:
+          parsed.method === "external"
+            ? "external"
+            : parsed.method
+              ? "autofirma"
+              : "autofirma",
+        certificateFileName: parsed.certificateFileName || "",
+        certificateRegisteredAt: parsed.certificateRegisteredAt || "",
+      });
+    } catch {
+      window.localStorage.removeItem(SIGNATURE_SECURITY_STORAGE_KEY);
+    }
+  }, []);
 
   useEffect(() => {
     if (!created?.verificationUrl) {
@@ -185,7 +257,16 @@ export default function PrescriptionApp() {
       return;
     }
 
+    setIsSignatureDialogOpen(true);
+  }
+
+  async function generatePrescription({
+    signWithAutoFirma = false,
+  }: { signWithAutoFirma?: boolean } = {}) {
+    setServerErrors([]);
+
     setIsSaving(true);
+    let createdPrescription: CreatedPrescription | null = null;
 
     try {
       const response = await fetch("/api/recetas", {
@@ -211,8 +292,14 @@ export default function PrescriptionApp() {
       }
 
       setCreated(data);
+      createdPrescription = data;
+      setIsSignatureDialogOpen(false);
     } finally {
       setIsSaving(false);
+    }
+
+    if (createdPrescription && signWithAutoFirma) {
+      await signPrescriptionWithAutoFirma(createdPrescription);
     }
   }
 
@@ -249,6 +336,98 @@ export default function PrescriptionApp() {
           }
         : current,
     );
+  }
+
+  async function saveSignedPdf(target: CreatedPrescription, file: File) {
+    const formData = new FormData();
+    formData.set("token", target.record.token);
+    formData.set("file", file);
+
+    const response = await fetch(
+      `/api/recetas/${target.record.id}/signed-pdf`,
+      {
+        method: "POST",
+        body: formData,
+      },
+    );
+    const data = (await response.json()) as
+      | { record: PrescriptionRecord }
+      | { errors?: string[] };
+
+    if (!response.ok || !("record" in data)) {
+      const errors = "errors" in data ? data.errors : undefined;
+      setServerErrors(errors || ["No se pudo subir el PDF firmado."]);
+      return null;
+    }
+
+    return data.record;
+  }
+
+  async function uploadSignedPdf(file?: File) {
+    if (!created || !file) {
+      return;
+    }
+
+    setIsUploadingSignedPdf(true);
+    setServerErrors([]);
+
+    try {
+      const record = await saveSignedPdf(created, file);
+
+      if (!record) {
+        return;
+      }
+
+      setCreated((current) =>
+        current
+          ? {
+              ...current,
+              record,
+            }
+          : current,
+      );
+    } finally {
+      setIsUploadingSignedPdf(false);
+    }
+  }
+
+  async function signPrescriptionWithAutoFirma(target: CreatedPrescription) {
+    setIsAutoSigning(true);
+    setServerErrors([]);
+    setAutoSignStatus("Preparando PDF base para AutoFirma...");
+
+    try {
+      const signedFile = await signPdfWithAutoFirma(
+        getGeneratedPdfUrl(target.pdfUrl),
+        createSignedPdfFileName(target.record.payload),
+        setAutoSignStatus,
+      );
+
+      setAutoSignStatus("Guardando PDF firmado en la receta...");
+      const record = await saveSignedPdf(target, signedFile);
+
+      if (!record) {
+        return;
+      }
+
+      setCreated((current) =>
+        current
+          ? {
+              ...current,
+              record,
+            }
+          : {
+              ...target,
+              record,
+            },
+      );
+      setAutoSignStatus("PDF firmado guardado.");
+    } catch (error) {
+      setServerErrors([getAutoFirmaErrorMessage(error)]);
+    } finally {
+      window.setTimeout(() => setAutoSignStatus(""), 1800);
+      setIsAutoSigning(false);
+    }
   }
 
   return (
@@ -429,11 +608,6 @@ export default function PrescriptionApp() {
               type="url"
               onChange={(value) => updateDoctor("website", value)}
             />
-            <TextField
-              label="Identidad de firma digital"
-              value={doctor.signatureIdentity}
-              onChange={(value) => updateDoctor("signatureIdentity", value)}
-            />
           </fieldset>
 
           {visibleErrors.length > 0 && (
@@ -449,7 +623,7 @@ export default function PrescriptionApp() {
 
           <div className="form-actions">
             <button className="primary-button" type="submit" disabled={!canGenerate}>
-              {isSaving ? "Generando..." : "Generar receta y QR"}
+              {isSaving || isAutoSigning ? "Procesando..." : "Generar receta y QR"}
             </button>
           </div>
         </section>
@@ -527,11 +701,57 @@ export default function PrescriptionApp() {
                   </a>
                   <a
                     className="secondary-button"
-                    href={created.pdfUrl}
+                    href={getGeneratedPdfUrl(created.pdfUrl)}
                     target="_blank"
                     download={createPdfFileName(created.record.payload)}
                   >
-                    PDF
+                    PDF base
+                  </a>
+                </div>
+                <div className="signed-pdf-panel">
+                  <div>
+                    <p className="signed-pdf-title">
+                      {created.record.signedPdf
+                        ? "PDF firmado cargado"
+                        : "PDF firmado pendiente"}
+                    </p>
+                    <span>
+                      {created.record.signedPdf
+                        ? created.record.signedPdf.fileName
+                        : "Firma con AutoFirma o sube aqui el PDF firmado."}
+                    </span>
+                  </div>
+                  {!created.record.signedPdf && (
+                    <button
+                      className="primary-button compact-action"
+                      disabled={isAutoSigning || isUploadingSignedPdf}
+                      type="button"
+                      onClick={() => signPrescriptionWithAutoFirma(created)}
+                    >
+                      {isAutoSigning ? "Firmando..." : "Firmar con AutoFirma"}
+                    </button>
+                  )}
+                  {autoSignStatus && (
+                    <p className="signature-inline-status">{autoSignStatus}</p>
+                  )}
+                  <label className="upload-signed-pdf">
+                    <input
+                      accept="application/pdf,.pdf"
+                      disabled={isUploadingSignedPdf || isAutoSigning}
+                      type="file"
+                      onChange={(event) => {
+                        void uploadSignedPdf(event.target.files?.[0]);
+                        event.target.value = "";
+                      }}
+                    />
+                    {isUploadingSignedPdf ? "Subiendo..." : "Subir PDF firmado"}
+                  </label>
+                  <a
+                    className="secondary-button"
+                    href={created.pdfUrl}
+                    target="_blank"
+                  >
+                    {created.record.signedPdf ? "Abrir PDF firmado" : "PDF actual"}
                   </a>
                 </div>
                 {created.record.status !== "cancelled" && (
@@ -556,6 +776,100 @@ export default function PrescriptionApp() {
           </div>
         </aside>
       </form>
+
+      {isSignatureDialogOpen && (
+        <div className="modal-backdrop">
+          <section
+            aria-labelledby="signature-dialog-title"
+            aria-modal="true"
+            className="signature-dialog"
+            role="dialog"
+          >
+            <div>
+              <p className="eyebrow">Seguridad de firma</p>
+              <h2 id="signature-dialog-title">Firma digital del documento</h2>
+              <p className="signature-dialog-copy">
+                Primero generaremos el PDF base con QR. Si AutoFirma esta
+                instalada en este equipo, la app abrira el selector de
+                certificado, recibira el PDF PAdES firmado y lo guardara en la
+                receta para que el QR abra ese documento firmado.
+              </p>
+            </div>
+
+            <div className="signature-status-card">
+              <span>Estado</span>
+              <strong>
+                {signatureSecurity.method
+                  ? "Metodo de firma preparado"
+                  : "Firma pendiente"}
+              </strong>
+              <small>
+                {signatureSecurity.method === "autofirma"
+                  ? "AutoFirma usara el certificado instalado en el equipo o navegador cuando este disponible."
+                  : signatureSecurity.method === "external"
+                    ? "El PDF se firmara con AutoFirma, Acrobat o proveedor externo."
+                    : "Selecciona como se firmara el PDF."}
+              </small>
+            </div>
+
+            <div className="signature-options">
+              <button
+                className={`signature-option ${
+                  signatureSecurity.method === "autofirma"
+                    ? "selected"
+                    : ""
+                }`}
+                type="button"
+                onClick={() => updateSignatureSecurity("autofirma")}
+              >
+                <span>Firmar ahora con AutoFirma</span>
+                <small>
+                  Abre la aplicacion local de firma y devuelve el PDF firmado a
+                  esta receta.
+                </small>
+              </button>
+
+              <button
+                className={`signature-option ${
+                  signatureSecurity.method === "external" ? "selected" : ""
+                }`}
+                type="button"
+                onClick={() => updateSignatureSecurity("external")}
+              >
+                <span>Firmar fuera de la app</span>
+                <small>Descargar PDF y firmar con AutoFirma o Acrobat.</small>
+              </button>
+            </div>
+
+            <div className="signature-dialog-actions">
+              <button
+                className="secondary-button"
+                disabled={isSaving || isAutoSigning}
+                type="button"
+                onClick={() => setIsSignatureDialogOpen(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary-button"
+                disabled={isSaving || isAutoSigning}
+                type="button"
+                onClick={() =>
+                  generatePrescription({
+                    signWithAutoFirma: signatureSecurity.method !== "external",
+                  })
+                }
+              >
+                {isSaving || isAutoSigning
+                  ? "Procesando..."
+                  : signatureSecurity.method === "external"
+                    ? "Generar PDF base y QR"
+                    : "Generar y firmar con AutoFirma"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 
@@ -593,6 +907,192 @@ export default function PrescriptionApp() {
     setServerErrors([]);
     setPrescription((current) => ({ ...current, [key]: value }));
   }
+
+  function updateSignatureSecurity(method: SignatureSecurityState["method"]) {
+    const next = {
+      ...signatureSecurity,
+      method,
+    };
+
+    setSignatureSecurity(next);
+    window.localStorage.setItem(
+      SIGNATURE_SECURITY_STORAGE_KEY,
+      JSON.stringify(next),
+    );
+  }
+
+}
+
+function getGeneratedPdfUrl(pdfUrl: string) {
+  const separator = pdfUrl.includes("?") ? "&" : "?";
+
+  return `${pdfUrl}${separator}version=generated`;
+}
+
+function createSignedPdfFileName(payload: PrescriptionPayload) {
+  return createPdfFileName(payload).replace(/\.pdf$/i, "-firmado.pdf");
+}
+
+async function signPdfWithAutoFirma(
+  pdfUrl: string,
+  fileName: string,
+  updateStatus: (status: string) => void,
+) {
+  if (isMobileUserAgent()) {
+    throw new Error(
+      "AutoFirma desde navegador no esta disponible en moviles. Abre la app desde un ordenador con AutoFirma instalada.",
+    );
+  }
+
+  updateStatus("Cargando el cliente oficial de AutoFirma...");
+  await loadAutoScript();
+
+  updateStatus("Descargando PDF base...");
+  const pdfResponse = await fetch(pdfUrl, { cache: "no-store" });
+
+  if (!pdfResponse.ok) {
+    throw new Error("No se pudo descargar el PDF base para firmarlo.");
+  }
+
+  const pdfBlob = await pdfResponse.blob();
+
+  if (pdfBlob.size === 0) {
+    throw new Error("El PDF base esta vacio.");
+  }
+
+  updateStatus("Abriendo AutoFirma para seleccionar certificado...");
+  const pdfB64 = await blobToBase64(pdfBlob);
+  const signedPdfB64 = await signBase64WithAutoFirma(pdfB64);
+  const signedPdfBlob = base64ToPdfBlob(signedPdfB64);
+  const header = await signedPdfBlob.slice(0, 5).text();
+
+  if (!header.startsWith("%PDF-")) {
+    throw new Error("AutoFirma no devolvio un PDF firmado valido.");
+  }
+
+  return new File([signedPdfBlob], fileName, { type: "application/pdf" });
+}
+
+function loadAutoScript() {
+  if (window.AutoScript) {
+    return Promise.resolve();
+  }
+
+  if (window.duranAutoScriptLoading) {
+    return window.duranAutoScriptLoading;
+  }
+
+  window.duranAutoScriptLoading = new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.async = true;
+    script.src = "/autoscript.js";
+    script.onload = () =>
+      window.AutoScript
+        ? resolve()
+        : reject(new Error("No se pudo inicializar AutoFirma."));
+    script.onerror = () =>
+      reject(new Error("No se pudo cargar el cliente web de AutoFirma."));
+    document.body.appendChild(script);
+  });
+
+  return window.duranAutoScriptLoading;
+}
+
+function signBase64WithAutoFirma(pdfB64: string) {
+  const autoScript = window.AutoScript;
+
+  if (!autoScript) {
+    throw new Error("AutoFirma no esta disponible en esta pagina.");
+  }
+
+  const keyStore = getPreferredAutoFirmaKeyStore(autoScript);
+
+  autoScript.setLocale?.("es_ES");
+  autoScript.setAppName?.("Duran Ginecologia");
+  autoScript.setServiceTimeout?.(120000);
+  autoScript.enableProgressDialog?.(true);
+  autoScript.cargarAppAfirma(undefined, keyStore);
+
+  if (keyStore) {
+    autoScript.setKeyStore?.(keyStore);
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    autoScript.sign(
+      pdfB64,
+      "SHA256withRSA",
+      "PAdES",
+      null,
+      (signatureB64) => resolve(signatureB64),
+      (errorType, errorMessage) =>
+        reject(
+          new Error(
+            [errorType, errorMessage].filter(Boolean).join(": ") ||
+              "AutoFirma cancelo o no completo la firma.",
+          ),
+        ),
+    );
+  });
+}
+
+function getPreferredAutoFirmaKeyStore(autoScript: AutoScriptApi) {
+  const platform = window.navigator.platform.toLowerCase();
+  const userAgent = window.navigator.userAgent.toLowerCase();
+
+  if (userAgent.includes("firefox") && autoScript.KEYSTORE_MOZILLA) {
+    return autoScript.KEYSTORE_MOZILLA;
+  }
+
+  if (platform.includes("win") && autoScript.KEYSTORE_WINDOWS) {
+    return autoScript.KEYSTORE_WINDOWS;
+  }
+
+  if (platform.includes("mac") && autoScript.KEYSTORE_APPLE) {
+    return autoScript.KEYSTORE_APPLE;
+  }
+
+  return null;
+}
+
+function getAutoFirmaErrorMessage(error: unknown) {
+  const autoScript = window.AutoScript;
+  const autoFirmaMessage = autoScript?.getErrorMessage?.();
+  const autoFirmaCode = autoScript?.getErrorCode?.();
+  const rawMessage = error instanceof Error ? error.message : String(error || "");
+  const details = [autoFirmaCode, autoFirmaMessage || rawMessage]
+    .filter(Boolean)
+    .join(" ");
+
+  return `No se pudo firmar con AutoFirma.${details ? ` ${details}` : ""}`;
+}
+
+function isMobileUserAgent() {
+  return /android|iphone|ipad|ipod/i.test(window.navigator.userAgent);
+}
+
+function blobToBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const [, base64 = ""] = result.split(",");
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error("No se pudo leer el PDF base."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function base64ToPdfBlob(base64: string) {
+  const cleanBase64 = base64.replace(/\s/g, "");
+  const binary = window.atob(cleanBase64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new Blob([bytes], { type: "application/pdf" });
 }
 
 function BrandHeader() {

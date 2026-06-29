@@ -4,6 +4,7 @@ import { createPrescriptionPdf } from "@/lib/prescriptionPdf";
 import {
   canOpenPrescriptionPdf,
   getPrescriptionRecord,
+  getSignedPrescriptionPdf,
 } from "@/lib/prescriptionStore";
 
 export const runtime = "nodejs";
@@ -31,6 +32,21 @@ export async function GET(
   }
 
   const verificationUrl = buildVerificationUrl(record, getPublicOrigin(request));
+  const version = request.nextUrl.searchParams.get("version");
+  const signedPdf =
+    version === "generated" ? null : await getSignedPrescriptionPdf(record);
+
+  if (signedPdf) {
+    return new NextResponse(signedPdf.buffer, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="${signedPdf.fileName}"`,
+        "Cache-Control": "no-store",
+        "X-Prescription-Pdf-Version": "signed",
+      },
+    });
+  }
+
   const pdf = await createPrescriptionPdf(record, verificationUrl);
 
   return new NextResponse(pdf.buffer, {
@@ -38,6 +54,7 @@ export async function GET(
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="${pdf.fileName}"`,
       "Cache-Control": "no-store",
+      "X-Prescription-Pdf-Version": "generated",
     },
   });
 }
