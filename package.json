@@ -9,6 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@signpdf/signer-p12": "^3.3.0",
+    "@signpdf/signpdf": "^3.3.0",
+    "buffer": "^6.0.3",
     "next": "16.1.6",
     "qrcode": "^1.5.4",
     "react": "19.2.3",

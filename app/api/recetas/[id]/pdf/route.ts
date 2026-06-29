@@ -33,6 +33,8 @@ export async function GET(
 
   const verificationUrl = buildVerificationUrl(record, getPublicOrigin(request));
   const version = request.nextUrl.searchParams.get("version");
+  const signaturePlaceholder =
+    request.nextUrl.searchParams.get("signaturePlaceholder") === "browser";
   const signedPdf =
     version === "generated" ? null : await getSignedPrescriptionPdf(record);
 
@@ -47,7 +49,9 @@ export async function GET(
     });
   }
 
-  const pdf = await createPrescriptionPdf(record, verificationUrl);
+  const pdf = await createPrescriptionPdf(record, verificationUrl, {
+    signaturePlaceholder,
+  });
 
   return new NextResponse(pdf.buffer, {
     headers: {
@@ -55,6 +59,9 @@ export async function GET(
       "Content-Disposition": `inline; filename="${pdf.fileName}"`,
       "Cache-Control": "no-store",
       "X-Prescription-Pdf-Version": "generated",
+      "X-Prescription-Pdf-Signature-Placeholder": signaturePlaceholder
+        ? "browser"
+        : "none",
     },
   });
 }

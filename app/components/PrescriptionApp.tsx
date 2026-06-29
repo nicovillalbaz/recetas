@@ -43,8 +43,11 @@ type GhlContactSearchResponse = {
   error?: string;
 };
 
+type SignatureMethod = "autofirma" | "browser-p12" | "external" | "";
+type SignatureDialogMode = "create" | "sign-existing";
+
 type SignatureSecurityState = {
-  method: "autofirma" | "external" | "";
+  method: SignatureMethod;
   certificateFileName: string;
   certificateRegisteredAt: string;
 };
@@ -130,10 +133,17 @@ export default function PrescriptionApp() {
   const [qrImage, setQrImage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isAutoSigning, setIsAutoSigning] = useState(false);
+  const [isBrowserSigning, setIsBrowserSigning] = useState(false);
   const [isUploadingSignedPdf, setIsUploadingSignedPdf] = useState(false);
   const [autoSignStatus, setAutoSignStatus] = useState("");
   const [serverErrors, setServerErrors] = useState<string[]>([]);
   const [isSignatureDialogOpen, setIsSignatureDialogOpen] = useState(false);
+  const [signatureDialogMode, setSignatureDialogMode] =
+    useState<SignatureDialogMode>("create");
+  const [browserCertificateFile, setBrowserCertificateFile] =
+    useState<File | null>(null);
+  const [browserCertificatePassphrase, setBrowserCertificatePassphrase] =
+    useState("");
   const [signatureSecurity, setSignatureSecurity] =
     useState<SignatureSecurityState>({
       method: "autofirma",
@@ -157,8 +167,9 @@ export default function PrescriptionApp() {
   );
   const validationErrors = validatePrescriptionPayload(draftPayload);
   const visibleErrors = serverErrors.length > 0 ? serverErrors : validationErrors;
+  const isSigning = isAutoSigning || isBrowserSigning;
   const canGenerate =
-    validationErrors.length === 0 && !isSaving && !isAutoSigning;
+    validationErrors.length === 0 && !isSaving && !isSigning;
   const previewPrescription = getPrescriptionText(prescription);
 
   useEffect(() => {
@@ -174,7 +185,9 @@ export default function PrescriptionApp() {
         method:
           parsed.method === "external"
             ? "external"
-            : parsed.method
+            : parsed.method === "browser-p12"
+              ? "browser-p12"
+              : parsed.method
               ? "autofirma"
               : "autofirma",
         certificateFileName: parsed.certificateFileName || "",
@@ -257,12 +270,13 @@ export default function PrescriptionApp() {
       return;
     }
 
+    setSignatureDialogMode("create");
     setIsSignatureDialogOpen(true);
   }
 
   async function generatePrescription({
-    signWithAutoFirma = false,
-  }: { signWithAutoFirma?: boolean } = {}) {
+    signatureMethod = "external",
+  }: { signatureMethod?: SignatureMethod } = {}) {
     setServerErrors([]);
 
     setIsSaving(true);
@@ -298,8 +312,12 @@ export default function PrescriptionApp() {
       setIsSaving(false);
     }
 
-    if (createdPrescription && signWithAutoFirma) {
+    if (createdPrescription && signatureMethod === "autofirma") {
       await signPrescriptionWithAutoFirma(createdPrescription);
+    }
+
+    if (createdPrescription && signatureMethod === "browser-p12") {
+      await signPrescriptionWithBrowserCertificate(createdPrescription);
     }
   }
 
@@ -427,6 +445,60 @@ export default function PrescriptionApp() {
     } finally {
       window.setTimeout(() => setAutoSignStatus(""), 1800);
       setIsAutoSigning(false);
+    }
+  }
+
+  async function signPrescriptionWithBrowserCertificate(
+    target: CreatedPrescription,
+  ) {
+    if (!browserCertificateFile) {
+      setServerErrors(["Sube un certificado .p12 o .pfx para probar esta firma."]);
+      setSignatureSecurity((current) => ({
+        ...current,
+        method: "browser-p12",
+      }));
+      setSignatureDialogMode("sign-existing");
+      setIsSignatureDialogOpen(true);
+      return;
+    }
+
+    setIsBrowserSigning(true);
+    setServerErrors([]);
+    setAutoSignStatus("Preparando firma en navegador...");
+
+    try {
+      const signedFile = await signPdfWithBrowserCertificate(
+        getGeneratedPdfUrl(target.pdfUrl, { signaturePlaceholder: true }),
+        createSignedPdfFileName(target.record.payload),
+        browserCertificateFile,
+        browserCertificatePassphrase,
+        setAutoSignStatus,
+      );
+
+      setAutoSignStatus("Guardando PDF firmado en la receta...");
+      const record = await saveSignedPdf(target, signedFile);
+
+      if (!record) {
+        return;
+      }
+
+      setCreated((current) =>
+        current
+          ? {
+              ...current,
+              record,
+            }
+          : {
+              ...target,
+              record,
+            },
+      );
+      setAutoSignStatus("PDF firmado guardado.");
+    } catch (error) {
+      setServerErrors([getBrowserCertificateErrorMessage(error)]);
+    } finally {
+      window.setTimeout(() => setAutoSignStatus(""), 1800);
+      setIsBrowserSigning(false);
     }
   }
 
@@ -722,14 +794,28 @@ export default function PrescriptionApp() {
                     </span>
                   </div>
                   {!created.record.signedPdf && (
-                    <button
-                      className="primary-button compact-action"
-                      disabled={isAutoSigning || isUploadingSignedPdf}
-                      type="button"
-                      onClick={() => signPrescriptionWithAutoFirma(created)}
-                    >
-                      {isAutoSigning ? "Firmando..." : "Firmar con AutoFirma"}
-                    </button>
+                    <div className="signature-method-actions">
+                      <button
+                        className="primary-button compact-action"
+                        disabled={isSigning || isUploadingSignedPdf}
+                        type="button"
+                        onClick={() => signPrescriptionWithAutoFirma(created)}
+                      >
+                        {isAutoSigning ? "Firmando..." : "Firmar con AutoFirma"}
+                      </button>
+                      <button
+                        className="secondary-button compact-action"
+                        disabled={isSigning || isUploadingSignedPdf}
+                        type="button"
+                        onClick={() => {
+                          updateSignatureSecurity("browser-p12");
+                          setSignatureDialogMode("sign-existing");
+                          setIsSignatureDialogOpen(true);
+                        }}
+                      >
+                        {isBrowserSigning ? "Firmando..." : "Firmar con .p12"}
+                      </button>
+                    </div>
                   )}
                   {autoSignStatus && (
                     <p className="signature-inline-status">{autoSignStatus}</p>
@@ -737,7 +823,7 @@ export default function PrescriptionApp() {
                   <label className="upload-signed-pdf">
                     <input
                       accept="application/pdf,.pdf"
-                      disabled={isUploadingSignedPdf || isAutoSigning}
+                      disabled={isUploadingSignedPdf || isSigning}
                       type="file"
                       onChange={(event) => {
                         void uploadSignedPdf(event.target.files?.[0]);
@@ -789,10 +875,8 @@ export default function PrescriptionApp() {
               <p className="eyebrow">Seguridad de firma</p>
               <h2 id="signature-dialog-title">Firma digital del documento</h2>
               <p className="signature-dialog-copy">
-                Primero generaremos el PDF base con QR. Si AutoFirma esta
-                instalada en este equipo, la app abrira el selector de
-                certificado, recibira el PDF PAdES firmado y lo guardara en la
-                receta para que el QR abra ese documento firmado.
+                Elige si quieres usar AutoFirma o probar la firma experimental
+                con certificado .p12/.pfx dentro del navegador.
               </p>
             </div>
 
@@ -805,9 +889,13 @@ export default function PrescriptionApp() {
               </strong>
               <small>
                 {signatureSecurity.method === "autofirma"
-                  ? "AutoFirma usara el certificado instalado en el equipo o navegador cuando este disponible."
+                  ? "AutoFirma usara el certificado instalado en el equipo cuando este disponible."
+                  : signatureSecurity.method === "browser-p12"
+                    ? browserCertificateFile
+                      ? browserCertificateFile.name
+                      : "Sube el archivo de certificado para firmar en el navegador."
                   : signatureSecurity.method === "external"
-                    ? "El PDF se firmara con AutoFirma, Acrobat o proveedor externo."
+                    ? "Se generara el PDF base sin firma."
                     : "Selecciona como se firmara el PDF."}
               </small>
             </div>
@@ -831,40 +919,85 @@ export default function PrescriptionApp() {
 
               <button
                 className={`signature-option ${
-                  signatureSecurity.method === "external" ? "selected" : ""
+                  signatureSecurity.method === "browser-p12" ? "selected" : ""
                 }`}
                 type="button"
-                onClick={() => updateSignatureSecurity("external")}
+                onClick={() => updateSignatureSecurity("browser-p12")}
               >
-                <span>Firmar fuera de la app</span>
-                <small>Descargar PDF y firmar con AutoFirma o Acrobat.</small>
+                <span>Firmar en navegador con .p12/.pfx</span>
+                <small>
+                  Procesa el certificado en esta pantalla para crear un PDF
+                  firmado sin abrir AutoFirma.
+                </small>
               </button>
             </div>
+
+            {signatureSecurity.method === "browser-p12" && (
+              <div className="browser-certificate-panel">
+                <label className="field">
+                  <span>Certificado .p12 / .pfx</span>
+                  <input
+                    accept=".p12,.pfx,application/x-pkcs12"
+                    type="file"
+                    onChange={(event) =>
+                      updateBrowserCertificate(event.target.files?.[0])
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Contraseña del certificado</span>
+                  <input
+                    autoComplete="off"
+                    type="password"
+                    value={browserCertificatePassphrase}
+                    onChange={(event) =>
+                      setBrowserCertificatePassphrase(event.target.value)
+                    }
+                  />
+                </label>
+                <p className="signature-caution">
+                  Prueba experimental: la clave se procesa en este navegador y
+                  no se guarda en GHL ni en el servidor.
+                </p>
+              </div>
+            )}
 
             <div className="signature-dialog-actions">
               <button
                 className="secondary-button"
-                disabled={isSaving || isAutoSigning}
+                disabled={isSaving || isSigning}
                 type="button"
                 onClick={() => setIsSignatureDialogOpen(false)}
               >
                 Cancelar
               </button>
+              {signatureDialogMode === "create" && (
+                <button
+                  className="secondary-button"
+                  disabled={isSaving || isSigning}
+                  type="button"
+                  onClick={() =>
+                    generatePrescription({ signatureMethod: "external" })
+                  }
+                >
+                  Solo PDF base
+                </button>
+              )}
               <button
                 className="primary-button"
-                disabled={isSaving || isAutoSigning}
+                disabled={isSaving || isSigning}
                 type="button"
-                onClick={() =>
-                  generatePrescription({
-                    signWithAutoFirma: signatureSecurity.method !== "external",
-                  })
-                }
+                onClick={runSelectedSignatureFlow}
               >
-                {isSaving || isAutoSigning
+                {isSaving || isSigning
                   ? "Procesando..."
                   : signatureSecurity.method === "external"
                     ? "Generar PDF base y QR"
-                    : "Generar y firmar con AutoFirma"}
+                    : signatureDialogMode === "sign-existing"
+                      ? "Firmar PDF actual"
+                      : signatureSecurity.method === "browser-p12"
+                        ? "Generar y firmar con .p12"
+                        : "Generar y firmar con AutoFirma"}
               </button>
             </div>
           </section>
@@ -908,7 +1041,25 @@ export default function PrescriptionApp() {
     setPrescription((current) => ({ ...current, [key]: value }));
   }
 
-  function updateSignatureSecurity(method: SignatureSecurityState["method"]) {
+  function updateBrowserCertificate(file?: File) {
+    setBrowserCertificateFile(file || null);
+    setServerErrors([]);
+
+    const next = {
+      ...signatureSecurity,
+      method: "browser-p12" as SignatureMethod,
+      certificateFileName: file?.name || "",
+      certificateRegisteredAt: file ? new Date().toISOString() : "",
+    };
+
+    setSignatureSecurity(next);
+    window.localStorage.setItem(
+      SIGNATURE_SECURITY_STORAGE_KEY,
+      JSON.stringify(next),
+    );
+  }
+
+  function updateSignatureSecurity(method: SignatureMethod) {
     const next = {
       ...signatureSecurity,
       method,
@@ -921,12 +1072,35 @@ export default function PrescriptionApp() {
     );
   }
 
+  async function runSelectedSignatureFlow() {
+    const signatureMethod = signatureSecurity.method || "autofirma";
+
+    if (signatureDialogMode === "sign-existing" && created) {
+      setIsSignatureDialogOpen(false);
+
+      if (signatureMethod === "browser-p12") {
+        await signPrescriptionWithBrowserCertificate(created);
+        return;
+      }
+
+      await signPrescriptionWithAutoFirma(created);
+      return;
+    }
+
+    await generatePrescription({ signatureMethod });
+  }
+
 }
 
-function getGeneratedPdfUrl(pdfUrl: string) {
+function getGeneratedPdfUrl(
+  pdfUrl: string,
+  options: { signaturePlaceholder?: boolean } = {},
+) {
   const separator = pdfUrl.includes("?") ? "&" : "?";
 
-  return `${pdfUrl}${separator}version=generated`;
+  return `${pdfUrl}${separator}version=generated${
+    options.signaturePlaceholder ? "&signaturePlaceholder=browser" : ""
+  }`;
 }
 
 function createSignedPdfFileName(payload: PrescriptionPayload) {
@@ -971,6 +1145,53 @@ async function signPdfWithAutoFirma(
   }
 
   return new File([signedPdfBlob], fileName, { type: "application/pdf" });
+}
+
+async function signPdfWithBrowserCertificate(
+  pdfUrl: string,
+  fileName: string,
+  certificateFile: File,
+  passphrase: string,
+  updateStatus: (status: string) => void,
+) {
+  updateStatus("Cargando firmador experimental en navegador...");
+  const [bufferModule, signpdfModule, signerModule] = await Promise.all([
+    import("buffer"),
+    import("@signpdf/signpdf"),
+    import("@signpdf/signer-p12"),
+  ]);
+  const runtimeGlobal = globalThis as typeof globalThis & {
+    Buffer?: typeof bufferModule.Buffer;
+  };
+
+  runtimeGlobal.Buffer = bufferModule.Buffer;
+
+  updateStatus("Descargando PDF base...");
+  const pdfResponse = await fetch(pdfUrl, { cache: "no-store" });
+
+  if (!pdfResponse.ok) {
+    throw new Error("No se pudo descargar el PDF base para firmarlo.");
+  }
+
+  const pdfBuffer = bufferModule.Buffer.from(await pdfResponse.arrayBuffer());
+
+  updateStatus("Leyendo certificado .p12/.pfx...");
+  const certificateBuffer = bufferModule.Buffer.from(
+    await certificateFile.arrayBuffer(),
+  );
+
+  updateStatus("Firmando PDF en este navegador...");
+  const signer = new signerModule.P12Signer(certificateBuffer, { passphrase });
+  const signedPdfBuffer = await signpdfModule.default.sign(pdfBuffer, signer);
+  const signedBytes = Uint8Array.from(signedPdfBuffer);
+  const signedBlob = new Blob([signedBytes], { type: "application/pdf" });
+  const header = await signedBlob.slice(0, 5).text();
+
+  if (!header.startsWith("%PDF-")) {
+    throw new Error("La firma en navegador no devolvio un PDF valido.");
+  }
+
+  return new File([signedBlob], fileName, { type: "application/pdf" });
 }
 
 function loadAutoScript() {
@@ -1064,6 +1285,21 @@ function getAutoFirmaErrorMessage(error: unknown) {
     .join(" ");
 
   return `No se pudo firmar con AutoFirma.${details ? ` ${details}` : ""}`;
+}
+
+function getBrowserCertificateErrorMessage(error: unknown) {
+  const rawMessage = error instanceof Error ? error.message : String(error || "");
+  const lowerMessage = rawMessage.toLowerCase();
+
+  if (
+    lowerMessage.includes("mac verify failure") ||
+    lowerMessage.includes("invalid password") ||
+    lowerMessage.includes("pkcs12")
+  ) {
+    return "No se pudo firmar con el certificado .p12/.pfx. Revisa el archivo y la contraseña.";
+  }
+
+  return `No se pudo firmar en el navegador.${rawMessage ? ` ${rawMessage}` : ""}`;
 }
 
 function isMobileUserAgent() {

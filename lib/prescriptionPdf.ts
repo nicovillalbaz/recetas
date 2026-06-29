@@ -49,7 +49,13 @@ type PdfPage = {
   images: PdfImageResource[];
 };
 
+type CreatePrescriptionPdfOptions = {
+  signaturePlaceholder?: boolean;
+};
+
 let cachedHeaderImage: PdfImageResource | null | undefined;
+
+const SIGNATURE_HEX_PLACEHOLDER_LENGTH = 65536;
 
 const signatureLines = [
   "EN CORIA A 20/06/2026",
@@ -62,6 +68,7 @@ const signatureLines = [
 export async function createPrescriptionPdf(
   record: PrescriptionRecord,
   verificationUrl: string,
+  options: CreatePrescriptionPdfOptions = {},
 ) {
   const page = new PdfCanvas();
   const qrImage = await createVerificationQrImage(verificationUrl);
@@ -70,7 +77,9 @@ export async function createPrescriptionPdf(
 
   return {
     fileName: createPdfFileName(record.payload),
-    buffer: buildPdf([{ content: page.content, images: page.images }]),
+    buffer: buildPdf([{ content: page.content, images: page.images }], {
+      signaturePlaceholder: options.signaturePlaceholder,
+    }),
   };
 }
 
@@ -287,7 +296,10 @@ async function createVerificationQrImage(verificationUrl: string) {
   }
 }
 
-function buildPdf(pages: PdfPage[]) {
+function buildPdf(
+  pages: PdfPage[],
+  options: { signaturePlaceholder?: boolean } = {},
+) {
   const objects: string[] = [];
   const addObject = (body: string) => {
     objects.push(body);
@@ -318,26 +330,54 @@ function buildPdf(pages: PdfPage[]) {
       `<< /Length ${Buffer.byteLength(page.content, "latin1")} >>\nstream\n${page.content}\nendstream`,
     ),
   );
-  const pageIds = pages.map((_, index) => objects.length + index + 1);
-  const pagesObjectId = objects.length + pages.length + 1;
+  const pageObjectStartId = objects.length + 1;
+  const pageIds = pages.map((_, index) => pageObjectStartId + index);
+  const signatureObjectId = options.signaturePlaceholder
+    ? pageObjectStartId + pages.length
+    : null;
+  const signatureWidgetObjectId = signatureObjectId
+    ? signatureObjectId + 1
+    : null;
+  const acroFormObjectId = signatureWidgetObjectId
+    ? signatureWidgetObjectId + 1
+    : null;
+  const pagesObjectId =
+    pageObjectStartId + pages.length + (options.signaturePlaceholder ? 3 : 0);
 
   pages.forEach((_, index) => {
     const imageResources = Array.from(pageImageRefs[index])
       .map(([name, objectId]) => `/${name} ${objectId} 0 R`)
       .join(" ");
     const xObjects = imageResources ? `/XObject << ${imageResources} >>` : "";
+    const annots =
+      index === 0 && signatureWidgetObjectId
+        ? ` /Annots [${signatureWidgetObjectId} 0 R]`
+        : "";
 
     addObject(
-      `<< /Type /Page /Parent ${pagesObjectId} 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 ${fontRegular} 0 R /F2 ${fontBold} 0 R /F3 ${fontItalic} 0 R >> ${xObjects} >> /Contents ${contentIds[index]} 0 R >>`,
+      `<< /Type /Page /Parent ${pagesObjectId} 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 ${fontRegular} 0 R /F2 ${fontBold} 0 R /F3 ${fontItalic} 0 R >> ${xObjects} >> /Contents ${contentIds[index]} 0 R${annots} >>`,
     );
   });
+
+  if (signatureObjectId && signatureWidgetObjectId && acroFormObjectId) {
+    addObject(buildSignatureObject());
+    addObject(
+      `<< /Type /Annot /Subtype /Widget /FT /Sig /Rect [0 0 0 0] /V ${signatureObjectId} 0 R /T ${pdfString("Signature1")} /F 4 /P ${pageIds[0]} 0 R >>`,
+    );
+    addObject(
+      `<< /Type /AcroForm /SigFlags 3 /Fields [${signatureWidgetObjectId} 0 R] >>`,
+    );
+  }
 
   const pagesObject = addObject(
     `<< /Type /Pages /Kids [${pageIds
       .map((id) => `${id} 0 R`)
       .join(" ")}] /Count ${pages.length} >>`,
   );
-  const catalogObject = addObject(`<< /Type /Catalog /Pages ${pagesObject} 0 R >>`);
+  const acroForm = acroFormObjectId ? ` /AcroForm ${acroFormObjectId} 0 R` : "";
+  const catalogObject = addObject(
+    `<< /Type /Catalog /Pages ${pagesObject} 0 R${acroForm} >>`,
+  );
 
   const parts = ["%PDF-1.4\n%\xE2\xE3\xCF\xD3\n"];
   const offsets = [0];
@@ -360,6 +400,26 @@ function buildPdf(pages: PdfPage[]) {
   );
 
   return Buffer.from(parts.join(""), "latin1");
+}
+
+function buildSignatureObject() {
+  const placeholder = "0".repeat(SIGNATURE_HEX_PLACEHOLDER_LENGTH);
+
+  return [
+    "<<",
+    "/Type /Sig",
+    "/Filter /Adobe.PPKLite",
+    "/SubFilter /ETSI.CAdES.detached",
+    "/ByteRange [0 /********** /********** /**********]",
+    `/Contents <${placeholder}>`,
+    `/Reason ${pdfString("Firma de receta medica privada")}`,
+    `/M ${pdfString(formatPdfDate(new Date()))}`,
+    `/ContactInfo ${pdfString("info@duranginecologia.com")}`,
+    `/Name ${pdfString("Dra. Duran Caballero")}`,
+    `/Location ${pdfString("Coria, Caceres, Espana")}`,
+    "/Prop_Build << /Filter << /Name /Adobe.PPKLite >> /App << /Name /RecetasDuranGinecologia >> >>",
+    ">>",
+  ].join("\n");
 }
 
 function buildImageObject(image: PdfImageResource) {
@@ -727,6 +787,17 @@ function toWinAnsi(value: string) {
 
 function measureText(value: string, size: number) {
   return toWinAnsi(value).length * size * 0.5;
+}
+
+function formatPdfDate(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  const minute = String(date.getUTCMinutes()).padStart(2, "0");
+  const second = String(date.getUTCSeconds()).padStart(2, "0");
+
+  return `D:${year}${month}${day}${hour}${minute}${second}Z`;
 }
 
 function fixed(value: number) {

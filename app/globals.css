@@ -372,6 +372,20 @@ legend {
   gap: 10px;
 }
 
+.browser-certificate-panel {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.signature-caution {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
+}
+
 .secondary-button {
   background: var(--brand-soft);
   color: var(--brand);
@@ -950,6 +964,12 @@ legend {
   padding: 0 14px;
 }
 
+.signature-method-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .signature-inline-status {
   background: #fbfcfb;
   border: 1px solid var(--line);
@@ -1230,6 +1250,10 @@ legend {
 
   .signature-dialog-actions {
     display: grid;
+  }
+
+  .signature-method-actions {
+    grid-template-columns: 1fr;
   }
 
   .verify-hero,
