@@ -141,11 +141,6 @@ export default async function VerifyPrescriptionPage({
           <span>Token verificado</span>
         </div>
 
-        <p className="verify-muted">
-          Esta verificación pertenece al sistema interno de Durán Ginecología. No
-          sustituye por sí sola una plataforma homologada de receta electrónica
-          privada.
-        </p>
       </section>
     </main>
   );

@@ -460,8 +460,6 @@ export default function PrescriptionApp() {
               <BrandHeader />
             </header>
 
-            <h2>RECETA MÉDICA PARA ASISTENCIA SANITARIA PRIVADA</h2>
-
             <section className="preview-patient-data">
               <p>
                 <span>Paciente:</span>

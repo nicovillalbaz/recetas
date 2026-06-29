@@ -79,7 +79,6 @@ function drawPrescriptionPage(page: PdfCanvas, record: PrescriptionRecord) {
   page.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT, "f");
 
   drawLetterhead(page);
-  drawTitle(page);
   drawPatientBlock(page, record.payload.patient);
   drawPrescriptionText(page, getPrescriptionText(record.payload.prescription));
   drawSignature(page);
@@ -117,22 +116,9 @@ function drawLetterhead(page: PdfCanvas) {
   });
 }
 
-function drawTitle(page: PdfCanvas) {
-  page.textCentered(
-    PAGE_WIDTH / 2,
-    580,
-    "RECETA MÉDICA PARA ASISTENCIA SANITARIA PRIVADA",
-    {
-      font: "F2",
-      size: 12,
-      color: TEXT,
-    },
-  );
-}
-
 function drawPatientBlock(page: PdfCanvas, patient: PatientProfile) {
-  const x = 310;
-  let y = 505;
+  const x = CONTENT_X + 24;
+  let y = 560;
   const lines: Array<[string, string]> = [
     ["Paciente:", patient.name || "No informado"],
     ["DNI/NIE:", patient.documentId || "No informado"],
@@ -147,12 +133,12 @@ function drawPatientBlock(page: PdfCanvas, patient: PatientProfile) {
     page.text(x, y, label, {
       size: 9.5,
       color: MUTED,
-      maxWidth: 105,
+      maxWidth: 130,
     });
-    page.text(x + 112, y, value, {
+    page.text(x + 140, y, value, {
       size: 9.5,
       color: TEXT,
-      maxWidth: 160,
+      maxWidth: CONTENT_WIDTH - 190,
       lineHeight: 12,
     });
     y -= 18;
@@ -160,13 +146,13 @@ function drawPatientBlock(page: PdfCanvas, patient: PatientProfile) {
 }
 
 function drawPrescriptionText(page: PdfCanvas, prescriptionText: string) {
-  page.text(CONTENT_X, 428, "RECETA MÉDICA PARA ASISTENCIA SANITARIA PRIVADA", {
+  page.text(CONTENT_X, 455, "RECETA MÉDICA PARA ASISTENCIA SANITARIA PRIVADA", {
     font: "F2",
     size: 11,
     color: TEXT,
     maxWidth: CONTENT_WIDTH,
   });
-  page.textBlock(CONTENT_X + 16, 390, prescriptionText, {
+  page.textBlock(CONTENT_X + 16, 418, prescriptionText, {
     size: 12.5,
     color: TEXT,
     maxWidth: CONTENT_WIDTH - 32,
@@ -175,9 +161,7 @@ function drawPrescriptionText(page: PdfCanvas, prescriptionText: string) {
 }
 
 function drawSignature(page: PdfCanvas) {
-  drawDigitalSignatureDemo(page, PAGE_WIDTH / 2, 205);
-
-  let y = 172;
+  let y = 178;
   signatureLines.forEach((line) => {
     page.textCentered(PAGE_WIDTH / 2, y, line, {
       size: 10.5,
@@ -260,34 +244,6 @@ function drawLogoMark(page: PdfCanvas, centerX: number, baselineY: number) {
 
   page.fillColor(...BRAND);
   page.ellipse(centerX - 11, baselineY + 57, 12, 12, "f");
-}
-
-function drawDigitalSignatureDemo(
-  page: PdfCanvas,
-  centerX: number,
-  baselineY: number,
-) {
-  page.strokeColor(...ACCENT);
-  page.strokeWidth(1.3);
-  page.lineCap(1);
-  page.moveTo(centerX - 62, baselineY - 10);
-  page.curveTo(
-    centerX - 45,
-    baselineY + 36,
-    centerX - 12,
-    baselineY + 34,
-    centerX - 36,
-    baselineY - 12,
-  );
-  page.curveTo(
-    centerX - 18,
-    baselineY + 6,
-    centerX + 18,
-    baselineY + 10,
-    centerX + 52,
-    baselineY + 28,
-  );
-  page.stroke();
 }
 
 function buildPdf(pages: PdfPage[]) {

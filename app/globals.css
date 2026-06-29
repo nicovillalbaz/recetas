@@ -702,23 +702,11 @@ legend {
   width: 12px;
 }
 
-.prescription-preview h2 {
-  color: #222;
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: 1.35;
-  margin: 46px auto 38px;
-  max-width: 270px;
-  text-align: center;
-}
-
 .preview-patient-data {
   display: grid;
   gap: 7px;
-  margin-left: auto;
-  max-width: 240px;
+  margin: 50px 0 0;
+  max-width: 340px;
   width: 100%;
 }
 
@@ -726,7 +714,7 @@ legend {
   color: #333;
   display: grid;
   font-size: 12px;
-  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-columns: 126px minmax(0, 1fr);
   line-height: 1.35;
   margin: 0;
   overflow-wrap: anywhere;
@@ -738,7 +726,7 @@ legend {
 
 .preview-recipe-text {
   flex: 1;
-  margin-top: 52px;
+  margin-top: 46px;
   min-height: 210px;
 }
 
