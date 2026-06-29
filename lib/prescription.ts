@@ -73,6 +73,12 @@ export type SignedPrescriptionPdf = {
   size: number;
 };
 
+export type DigitalSignatureStamp = {
+  signerName: string;
+  signerId?: string;
+  signedAt: string;
+};
+
 export const defaultDoctorProfile: DoctorProfile = {
   name: "Dra. Durán Caballero, María del Sol",
   specialty: "Ginecología y Obstetricia",
@@ -282,6 +288,44 @@ export function formatDateTime(value: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+export function formatDigitalSignatureDate(value: string) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("es-ES", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Europe/Madrid",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+export function getDigitalSignatureStampLines(stamp: DigitalSignatureStamp) {
+  const signerName = cleanDigitalSignatureLine(stamp.signerName);
+  const signerId = cleanDigitalSignatureLine(stamp.signerId || "");
+  const signedAt = formatDigitalSignatureDate(stamp.signedAt);
+
+  return [
+    "Firmado digitalmente por",
+    signerName,
+    signerId,
+    signedAt ? `Fecha: ${signedAt}` : "",
+  ].filter(Boolean);
+}
+
+function cleanDigitalSignatureLine(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
 export function getPrescriptionText(prescription: PrescriptionDetails) {

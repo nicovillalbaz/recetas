@@ -879,14 +879,6 @@ legend {
   margin: 0;
 }
 
-.signature-stamp {
-  color: rgba(157, 47, 99, 0.7);
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 9.5px;
-  letter-spacing: 0;
-  margin-bottom: 8px;
-}
-
 .preview-clinic-footer {
   color: #6a1f42 !important;
   display: grid !important;

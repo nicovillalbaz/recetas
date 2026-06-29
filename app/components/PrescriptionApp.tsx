@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
+  type DigitalSignatureStamp,
   type DoctorProfile,
   type PatientProfile,
   type PrescriptionDetails,
@@ -66,6 +67,12 @@ type AutoScriptApi = {
   setKeyStore?: (keyStore?: string | null) => void;
   setLocale?: (locale: string) => void;
   setServiceTimeout?: (timeoutMs: number) => void;
+  setStickySignatory?: (sticky: boolean) => void;
+  selectCertificate?: (
+    params: string | null,
+    successCallback: (certificateB64: string) => void,
+    errorCallback: (errorType?: string, errorMessage?: string) => void,
+  ) => void;
   sign: (
     dataB64: string,
     algorithm: string,
@@ -74,6 +81,47 @@ type AutoScriptApi = {
     successCallback: (signatureB64: string, certificateB64?: string) => void,
     errorCallback: (errorType?: string, errorMessage?: string) => void,
   ) => void;
+};
+
+type ForgeCertificateAttribute = {
+  name?: string;
+  shortName?: string;
+  type?: string;
+  value?: unknown;
+};
+
+type ForgeCertificate = {
+  subject?: {
+    attributes?: ForgeCertificateAttribute[];
+  };
+};
+
+type ForgePkcs12 = {
+  getBags: (query: {
+    bagType: string;
+  }) => Record<string, Array<{ cert?: ForgeCertificate }>>;
+};
+
+type ForgeModule = {
+  asn1: {
+    fromDer: (der: string) => unknown;
+  };
+  pki: {
+    certificateFromAsn1: (asn1: unknown) => ForgeCertificate;
+    oids: {
+      certBag: string;
+    };
+  };
+  pkcs12: {
+    pkcs12FromAsn1: (
+      asn1: unknown,
+      strict: boolean,
+      password: string,
+    ) => ForgePkcs12;
+  };
+  util: {
+    decode64: (value: string) => string;
+  };
 };
 
 declare global {
@@ -416,7 +464,7 @@ export default function PrescriptionApp() {
 
     try {
       const signedFile = await signPdfWithAutoFirma(
-        getGeneratedPdfUrl(target.pdfUrl),
+        target.pdfUrl,
         createSignedPdfFileName(target.record.payload),
         setAutoSignStatus,
       );
@@ -468,7 +516,7 @@ export default function PrescriptionApp() {
 
     try {
       const signedFile = await signPdfWithBrowserCertificate(
-        getGeneratedPdfUrl(target.pdfUrl, { signaturePlaceholder: true }),
+        target.pdfUrl,
         createSignedPdfFileName(target.record.payload),
         browserCertificateFile,
         browserCertificatePassphrase,
@@ -1094,13 +1142,29 @@ export default function PrescriptionApp() {
 
 function getGeneratedPdfUrl(
   pdfUrl: string,
-  options: { signaturePlaceholder?: boolean } = {},
+  options: {
+    digitalSignatureStamp?: DigitalSignatureStamp;
+    signaturePlaceholder?: boolean;
+  } = {},
 ) {
-  const separator = pdfUrl.includes("?") ? "&" : "?";
+  const url = new URL(pdfUrl, window.location.origin);
 
-  return `${pdfUrl}${separator}version=generated${
-    options.signaturePlaceholder ? "&signaturePlaceholder=browser" : ""
-  }`;
+  url.searchParams.set("version", "generated");
+
+  if (options.signaturePlaceholder) {
+    url.searchParams.set("signaturePlaceholder", "browser");
+  }
+
+  if (options.digitalSignatureStamp) {
+    url.searchParams.set("signerName", options.digitalSignatureStamp.signerName);
+    url.searchParams.set("signedAt", options.digitalSignatureStamp.signedAt);
+
+    if (options.digitalSignatureStamp.signerId) {
+      url.searchParams.set("signerId", options.digitalSignatureStamp.signerId);
+    }
+  }
+
+  return url.toString();
 }
 
 function createSignedPdfFileName(payload: PrescriptionPayload) {
@@ -1120,31 +1184,52 @@ async function signPdfWithAutoFirma(
 
   updateStatus("Cargando el cliente oficial de AutoFirma...");
   await loadAutoScript();
+  const autoScript = configureAutoFirmaClient();
 
-  updateStatus("Descargando PDF base...");
-  const pdfResponse = await fetch(pdfUrl, { cache: "no-store" });
-
-  if (!pdfResponse.ok) {
-    throw new Error("No se pudo descargar el PDF base para firmarlo.");
+  if (!autoScript.selectCertificate || !autoScript.setStickySignatory) {
+    throw new Error(
+      "Esta version de AutoFirma no permite fijar el certificado antes de firmar.",
+    );
   }
 
-  const pdfBlob = await pdfResponse.blob();
+  autoScript.setStickySignatory(true);
 
-  if (pdfBlob.size === 0) {
-    throw new Error("El PDF base esta vacio.");
+  try {
+    updateStatus("Seleccionando certificado real en AutoFirma...");
+    const certificateB64 = await selectCertificateWithAutoFirma(autoScript);
+    const digitalSignatureStamp =
+      await createDigitalSignatureStampFromCertificateB64(certificateB64);
+
+    updateStatus("Descargando PDF con los datos del certificado...");
+    const pdfResponse = await fetch(
+      getGeneratedPdfUrl(pdfUrl, { digitalSignatureStamp }),
+      { cache: "no-store" },
+    );
+
+    if (!pdfResponse.ok) {
+      throw new Error("No se pudo descargar el PDF base para firmarlo.");
+    }
+
+    const pdfBlob = await pdfResponse.blob();
+
+    if (pdfBlob.size === 0) {
+      throw new Error("El PDF base esta vacio.");
+    }
+
+    updateStatus("Firmando con el certificado seleccionado...");
+    const pdfB64 = await blobToBase64(pdfBlob);
+    const signedPdfB64 = await signBase64WithAutoFirma(autoScript, pdfB64);
+    const signedPdfBlob = base64ToPdfBlob(signedPdfB64);
+    const header = await signedPdfBlob.slice(0, 5).text();
+
+    if (!header.startsWith("%PDF-")) {
+      throw new Error("AutoFirma no devolvio un PDF firmado valido.");
+    }
+
+    return new File([signedPdfBlob], fileName, { type: "application/pdf" });
+  } finally {
+    autoScript.setStickySignatory(false);
   }
-
-  updateStatus("Abriendo AutoFirma para seleccionar certificado...");
-  const pdfB64 = await blobToBase64(pdfBlob);
-  const signedPdfB64 = await signBase64WithAutoFirma(pdfB64);
-  const signedPdfBlob = base64ToPdfBlob(signedPdfB64);
-  const header = await signedPdfBlob.slice(0, 5).text();
-
-  if (!header.startsWith("%PDF-")) {
-    throw new Error("AutoFirma no devolvio un PDF firmado valido.");
-  }
-
-  return new File([signedPdfBlob], fileName, { type: "application/pdf" });
 }
 
 async function signPdfWithBrowserCertificate(
@@ -1166,19 +1251,29 @@ async function signPdfWithBrowserCertificate(
 
   runtimeGlobal.Buffer = bufferModule.Buffer;
 
-  updateStatus("Descargando PDF base...");
-  const pdfResponse = await fetch(pdfUrl, { cache: "no-store" });
+  updateStatus("Leyendo certificado .p12/.pfx...");
+  const certificateBuffer = bufferModule.Buffer.from(
+    await certificateFile.arrayBuffer(),
+  );
+  const digitalSignatureStamp = await createDigitalSignatureStampFromP12(
+    certificateBuffer,
+    passphrase,
+  );
+
+  updateStatus("Descargando PDF con los datos del certificado...");
+  const pdfResponse = await fetch(
+    getGeneratedPdfUrl(pdfUrl, {
+      digitalSignatureStamp,
+      signaturePlaceholder: true,
+    }),
+    { cache: "no-store" },
+  );
 
   if (!pdfResponse.ok) {
     throw new Error("No se pudo descargar el PDF base para firmarlo.");
   }
 
   const pdfBuffer = bufferModule.Buffer.from(await pdfResponse.arrayBuffer());
-
-  updateStatus("Leyendo certificado .p12/.pfx...");
-  const certificateBuffer = bufferModule.Buffer.from(
-    await certificateFile.arrayBuffer(),
-  );
 
   updateStatus("Firmando PDF en este navegador...");
   const signer = new signerModule.P12Signer(certificateBuffer, { passphrase });
@@ -1219,7 +1314,7 @@ function loadAutoScript() {
   return window.duranAutoScriptLoading;
 }
 
-function signBase64WithAutoFirma(pdfB64: string) {
+function configureAutoFirmaClient() {
   const autoScript = window.AutoScript;
 
   if (!autoScript) {
@@ -1238,6 +1333,37 @@ function signBase64WithAutoFirma(pdfB64: string) {
     autoScript.setKeyStore?.(keyStore);
   }
 
+  return autoScript;
+}
+
+function selectCertificateWithAutoFirma(autoScript: AutoScriptApi) {
+  if (!autoScript.selectCertificate) {
+    throw new Error("AutoFirma no permite seleccionar el certificado.");
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    autoScript.selectCertificate?.(
+      null,
+      (certificateB64) => {
+        if (!certificateB64) {
+          reject(new Error("AutoFirma no devolvio el certificado seleccionado."));
+          return;
+        }
+
+        resolve(certificateB64);
+      },
+      (errorType, errorMessage) =>
+        reject(
+          new Error(
+            [errorType, errorMessage].filter(Boolean).join(": ") ||
+              "AutoFirma cancelo la seleccion del certificado.",
+          ),
+        ),
+    );
+  });
+}
+
+function signBase64WithAutoFirma(autoScript: AutoScriptApi, pdfB64: string) {
   return new Promise<string>((resolve, reject) => {
     autoScript.sign(
       pdfB64,
@@ -1273,6 +1399,138 @@ function getPreferredAutoFirmaKeyStore(autoScript: AutoScriptApi) {
   }
 
   return null;
+}
+
+async function createDigitalSignatureStampFromCertificateB64(
+  certificateB64: string,
+): Promise<DigitalSignatureStamp> {
+  const forge = await loadForge();
+  const der = forge.util.decode64(normalizeCertificateBase64(certificateB64));
+  const cert = forge.pki.certificateFromAsn1(forge.asn1.fromDer(der));
+
+  return createDigitalSignatureStampFromCertificate(cert);
+}
+
+async function createDigitalSignatureStampFromP12(
+  certificateBuffer: Uint8Array,
+  passphrase: string,
+): Promise<DigitalSignatureStamp> {
+  const forge = await loadForge();
+  const asn1 = forge.asn1.fromDer(binaryStringFromBytes(certificateBuffer));
+  const p12 = forge.pkcs12.pkcs12FromAsn1(asn1, false, passphrase || "");
+  const certBags =
+    p12.getBags({ bagType: forge.pki.oids.certBag })[
+      forge.pki.oids.certBag
+    ] || [];
+  const cert = certBags.find((bag) => bag.cert)?.cert;
+
+  if (!cert) {
+    throw new Error("El archivo .p12/.pfx no contiene un certificado legible.");
+  }
+
+  return createDigitalSignatureStampFromCertificate(cert);
+}
+
+async function loadForge() {
+  const forgeModule = (await import("node-forge")) as unknown as
+    | ({ default?: ForgeModule } & ForgeModule)
+    | { default: ForgeModule };
+
+  return ("default" in forgeModule && forgeModule.default
+    ? forgeModule.default
+    : forgeModule) as ForgeModule;
+}
+
+function createDigitalSignatureStampFromCertificate(
+  cert: ForgeCertificate,
+): DigitalSignatureStamp {
+  const commonName = getCertificateSubjectValue(cert, [
+    "CN",
+    "commonName",
+    "2.5.4.3",
+  ]);
+  const givenName = getCertificateSubjectValue(cert, ["GN", "givenName"]);
+  const surname = getCertificateSubjectValue(cert, ["SN", "surname"]);
+  const organization = getCertificateSubjectValue(cert, [
+    "O",
+    "organizationName",
+    "2.5.4.10",
+  ]);
+  const serialNumber = getCertificateSubjectValue(cert, [
+    "serialNumber",
+    "2.5.4.5",
+  ]);
+  const signerName = cleanCertificateText(
+    commonName || [givenName, surname].filter(Boolean).join(" ") || organization,
+  );
+  const signerId = cleanCertificateText(
+    serialNumber ? `Serial: ${serialNumber}` : "",
+  );
+
+  if (!signerName) {
+    throw new Error(
+      "El certificado seleccionado no incluye una identidad legible.",
+    );
+  }
+
+  return {
+    signerName,
+    signerId: signerId || undefined,
+    signedAt: new Date().toISOString(),
+  };
+}
+
+function getCertificateSubjectValue(
+  cert: ForgeCertificate,
+  aliases: string[],
+) {
+  const attribute = cert.subject?.attributes?.find((current) =>
+    aliases.some((alias) => certificateAttributeMatches(current, alias)),
+  );
+
+  return cleanCertificateText(attribute?.value);
+}
+
+function certificateAttributeMatches(
+  attribute: ForgeCertificateAttribute,
+  alias: string,
+) {
+  const normalizedAlias = alias.toLowerCase();
+
+  return [attribute.shortName, attribute.name, attribute.type]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase() === normalizedAlias);
+}
+
+function cleanCertificateText(value: unknown) {
+  return String(value || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+function normalizeCertificateBase64(value: string) {
+  let normalized = value.replace(/\s/g, "").replace(/-/g, "+").replace(/_/g, "/");
+
+  while (normalized.length % 4 !== 0) {
+    normalized += "=";
+  }
+
+  return normalized;
+}
+
+function binaryStringFromBytes(bytes: Uint8Array) {
+  let binary = "";
+  const chunkSize = 8192;
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(index, index + chunkSize),
+    );
+  }
+
+  return binary;
 }
 
 function getAutoFirmaErrorMessage(error: unknown) {

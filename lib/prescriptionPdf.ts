@@ -3,10 +3,12 @@ import path from "node:path";
 import { deflateSync, inflateSync } from "node:zlib";
 import QRCode from "qrcode";
 import {
+  type DigitalSignatureStamp,
   type PatientProfile,
   type PrescriptionRecord,
   createPdfFileName,
   formatDate,
+  getDigitalSignatureStampLines,
   getPrescriptionText,
 } from "./prescription";
 
@@ -51,6 +53,7 @@ type PdfPage = {
 
 type CreatePrescriptionPdfOptions = {
   signaturePlaceholder?: boolean;
+  digitalSignatureStamp?: DigitalSignatureStamp;
 };
 
 let cachedHeaderImage: PdfImageResource | null | undefined;
@@ -73,7 +76,7 @@ export async function createPrescriptionPdf(
   const page = new PdfCanvas();
   const qrImage = await createVerificationQrImage(verificationUrl);
 
-  drawPrescriptionPage(page, record, qrImage);
+  drawPrescriptionPage(page, record, qrImage, options);
 
   return {
     fileName: createPdfFileName(record.payload),
@@ -87,6 +90,7 @@ function drawPrescriptionPage(
   page: PdfCanvas,
   record: PrescriptionRecord,
   qrImage: PdfImageResource | null,
+  options: CreatePrescriptionPdfOptions,
 ) {
   page.fillColor(1, 1, 1);
   page.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT, "f");
@@ -94,6 +98,7 @@ function drawPrescriptionPage(
   drawLetterhead(page);
   drawPatientBlock(page, record.payload.patient);
   drawPrescriptionText(page, getPrescriptionText(record.payload.prescription));
+  drawDigitalSignatureStamp(page, options.digitalSignatureStamp);
   drawSignature(page);
   drawVerificationQr(page, qrImage);
   drawFooter(page);
@@ -171,6 +176,27 @@ function drawPrescriptionText(page: PdfCanvas, prescriptionText: string) {
     color: TEXT,
     maxWidth: CONTENT_WIDTH - 32,
     lineHeight: 18,
+  });
+}
+
+function drawDigitalSignatureStamp(
+  page: PdfCanvas,
+  stamp?: DigitalSignatureStamp,
+) {
+  if (!stamp) {
+    return;
+  }
+
+  const lines = getDigitalSignatureStampLines(stamp);
+  let y = 244;
+
+  lines.forEach((line, index) => {
+    page.textCentered(PAGE_WIDTH / 2, y, line, {
+      size: index === 1 ? 9.5 : 8.5,
+      color: index === 1 ? TEXT : MUTED,
+      maxWidth: CONTENT_WIDTH,
+    });
+    y -= 13;
   });
 }
 

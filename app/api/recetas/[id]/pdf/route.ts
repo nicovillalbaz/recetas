@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildVerificationUrl } from "@/lib/prescription";
+import {
+  type DigitalSignatureStamp,
+  buildVerificationUrl,
+} from "@/lib/prescription";
 import { createPrescriptionPdf } from "@/lib/prescriptionPdf";
 import {
   canOpenPrescriptionPdf,
@@ -35,6 +38,9 @@ export async function GET(
   const version = request.nextUrl.searchParams.get("version");
   const signaturePlaceholder =
     request.nextUrl.searchParams.get("signaturePlaceholder") === "browser";
+  const digitalSignatureStamp = readDigitalSignatureStamp(
+    request.nextUrl.searchParams,
+  );
   const signedPdf =
     version === "generated" ? null : await getSignedPrescriptionPdf(record);
 
@@ -51,6 +57,7 @@ export async function GET(
 
   const pdf = await createPrescriptionPdf(record, verificationUrl, {
     signaturePlaceholder,
+    digitalSignatureStamp,
   });
 
   return new NextResponse(pdf.buffer, {
@@ -68,4 +75,26 @@ export async function GET(
 
 function getPublicOrigin(request: NextRequest) {
   return process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+}
+
+function readDigitalSignatureStamp(
+  searchParams: URLSearchParams,
+): DigitalSignatureStamp | undefined {
+  const signerName = cleanSignatureQueryValue(searchParams.get("signerName"));
+  const signerId = cleanSignatureQueryValue(searchParams.get("signerId"));
+  const signedAt = cleanSignatureQueryValue(searchParams.get("signedAt"));
+
+  if (!signerName || !signedAt || Number.isNaN(new Date(signedAt).getTime())) {
+    return undefined;
+  }
+
+  return {
+    signerName,
+    signerId,
+    signedAt,
+  };
+}
+
+function cleanSignatureQueryValue(value: string | null) {
+  return (value || "").replace(/\s+/g, " ").trim().slice(0, 140);
 }
