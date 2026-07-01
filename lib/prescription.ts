@@ -63,8 +63,16 @@ export type PrescriptionRecord = {
   cancelledAt?: string;
   locationId: string;
   contactId: string;
+  createdBy?: PrescriptionActor;
   signedPdf?: SignedPrescriptionPdf;
+  sentAt?: string;
   payload: PrescriptionPayload;
+};
+
+export type PrescriptionActor = {
+  userId: string;
+  name: string;
+  email: string;
 };
 
 export type SignedPrescriptionPdf = {

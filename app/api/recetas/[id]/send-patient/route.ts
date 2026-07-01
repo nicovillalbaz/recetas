@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireLocationSession } from "@/lib/authSession";
+import {
+  GhlConfigurationError,
+  createGhlContactNote,
+  sendGhlSmsToContact,
+} from "@/lib/ghl";
 import { buildPrescriptionPdfUrl } from "@/lib/prescription";
-import { sendGhlSmsToContact, GhlConfigurationError } from "@/lib/ghl";
 import {
   canOpenPrescriptionPdf,
   getPrescriptionRecord,
+  markPrescriptionSent,
+  recordPrescriptionEvent,
 } from "@/lib/prescriptionStore";
 
 export const runtime = "nodejs";
@@ -12,11 +19,24 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const session = requireLocationSession(request);
+
+  if (!session) {
+    return NextResponse.json(
+      { errors: ["Inicia sesion para enviar recetas."] },
+      { status: 401 },
+    );
+  }
+
   const { id } = await context.params;
   const body = (await request.json().catch(() => ({}))) as { token?: string };
   const record = await getPrescriptionRecord(id);
 
-  if (!record || record.token !== body.token) {
+  if (
+    !record ||
+    record.token !== body.token ||
+    record.locationId !== session.locationId
+  ) {
     return NextResponse.json(
       { errors: ["Receta no encontrada o token invalido."] },
       { status: 404 },
@@ -39,7 +59,7 @@ export async function POST(
 
   if (!record.contactId) {
     return NextResponse.json(
-      { errors: ["Esta receta no esta asociada a un contacto de GHL."] },
+      { errors: ["Esta receta no esta asociada a un contacto."] },
       { status: 422 },
     );
   }
@@ -48,8 +68,18 @@ export async function POST(
 
   try {
     await sendGhlSmsToContact(record.contactId, buildPatientSms(pdfUrl));
+    const updatedRecord = await markPrescriptionSent(record.id, session);
 
-    return NextResponse.json({ sent: true });
+    await createGhlContactNote(
+      record.contactId,
+      `Receta enviada al paciente por SMS: ${pdfUrl}`,
+    ).catch(async (error) => {
+      await recordPrescriptionEvent(record.id, "ghl_note_failed", session, {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    return NextResponse.json({ sent: true, record: updatedRecord || record });
   } catch (error) {
     if (error instanceof GhlConfigurationError) {
       return NextResponse.json({ errors: [error.message] }, { status: 503 });
@@ -61,8 +91,8 @@ export async function POST(
       {
         errors: [
           detail
-            ? `No se pudo enviar el SMS desde GHL. ${detail}`
-            : "No se pudo enviar el SMS desde GHL.",
+            ? `No se pudo enviar el SMS. ${detail}`
+            : "No se pudo enviar el SMS.",
         ],
       },
       { status: 502 },

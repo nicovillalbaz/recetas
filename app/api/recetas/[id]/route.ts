@@ -3,7 +3,7 @@ import {
   buildPrescriptionPdfUrl,
   buildVerificationUrl,
 } from "@/lib/prescription";
-import { getPrescriptionRecord } from "@/lib/prescriptionStore";
+import { getPrescriptionRecordByReadableToken } from "@/lib/prescriptionStore";
 
 export const runtime = "nodejs";
 
@@ -13,9 +13,9 @@ export async function GET(
 ) {
   const { id } = await context.params;
   const token = request.nextUrl.searchParams.get("token") || "";
-  const record = await getPrescriptionRecord(id);
+  const record = await getPrescriptionRecordByReadableToken(id, token);
 
-  if (!record || record.token !== token) {
+  if (!record) {
     return NextResponse.json(
       { errors: ["Receta no encontrada o token invalido."] },
       { status: 404 },
@@ -23,11 +23,18 @@ export async function GET(
   }
 
   const origin = getPublicOrigin(request);
+  const responseRecord =
+    record.token === token
+      ? record
+      : {
+          ...record,
+          token,
+        };
 
   return NextResponse.json({
-    record,
-    verificationUrl: buildVerificationUrl(record, origin),
-    pdfUrl: buildPrescriptionPdfUrl(record, origin),
+    record: responseRecord,
+    verificationUrl: buildVerificationUrl({ id: record.id, token }, origin),
+    pdfUrl: buildPrescriptionPdfUrl({ id: record.id, token }, origin),
   });
 }
 

@@ -23,7 +23,7 @@ export type GhlContactSummary = {
 
 export class GhlConfigurationError extends Error {
   constructor() {
-    super("Configura GHL_PRIVATE_TOKEN y GHL_LOCATION_ID en EasyPanel.");
+    super("Configura el token privado y la subcuenta en EasyPanel.");
     this.name = "GhlConfigurationError";
   }
 }
@@ -81,6 +81,24 @@ export async function sendGhlSmsToContact(contactId: string, message: string) {
   }, config);
 }
 
+export async function createGhlContactNote(contactId: string, body: string) {
+  const cleanContactId = contactId.trim();
+  const cleanBody = body.trim();
+
+  if (!cleanContactId || !cleanBody) {
+    throw new Error("Faltan el contacto o el texto de la nota.");
+  }
+
+  const config = getGhlConfig();
+
+  return fetchGhlJson(`/contacts/${encodeURIComponent(cleanContactId)}/notes`, {
+    method: "POST",
+    body: JSON.stringify({
+      body: cleanBody,
+    }),
+  }, config);
+}
+
 async function searchContactsWithPost(config: GhlConfig, query: string) {
   const response = await fetchGhlJson("/contacts/search", {
     method: "POST",
@@ -129,7 +147,7 @@ async function fetchGhlJson(
     const body = await response.text().catch(() => "");
     const detail = body ? ` ${body.slice(0, 240)}` : "";
 
-    throw new Error(`GHL API ${response.status}.${detail}`);
+    throw new Error(`API ${response.status}.${detail}`);
   }
 
   return response.json().catch(() => ({})) as Promise<unknown>;

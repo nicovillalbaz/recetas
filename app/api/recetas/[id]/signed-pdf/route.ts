@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  getSessionFromRequest,
+  requireLocationSession,
+} from "@/lib/authSession";
+import {
   canOpenPrescriptionPdf,
   getPrescriptionRecord,
+  getPrescriptionRecordByReadableToken,
   saveSignedPrescriptionPdf,
 } from "@/lib/prescriptionStore";
 
@@ -27,16 +32,50 @@ export async function POST(
   const file = formData.get("file");
   const currentRecord = await getPrescriptionRecord(id);
 
-  if (!currentRecord || currentRecord.token !== token) {
+  if (!currentRecord) {
     return NextResponse.json(
-      { errors: ["Receta no encontrada o token inválido."] },
+      { errors: ["Receta no encontrada o token invalido."] },
+      { status: 404 },
+    );
+  }
+
+  const session = getSessionFromRequest(request);
+  const locationSession = requireLocationSession(request);
+  const isPublicRecordToken = currentRecord.token === token;
+
+  if (session && !locationSession) {
+    return NextResponse.json(
+      { errors: ["Sesion no valida para esta subcuenta."] },
+      { status: 403 },
+    );
+  }
+
+  if (locationSession && currentRecord.locationId !== locationSession.locationId) {
+    return NextResponse.json(
+      { errors: ["La receta no pertenece a la subcuenta autorizada."] },
+      { status: 403 },
+    );
+  }
+
+  if (isPublicRecordToken && !locationSession) {
+    return NextResponse.json(
+      { errors: ["Inicia sesion para subir el PDF firmado."] },
+      { status: 401 },
+    );
+  }
+
+  const readableRecord = await getPrescriptionRecordByReadableToken(id, token);
+
+  if (!readableRecord) {
+    return NextResponse.json(
+      { errors: ["Receta no encontrada o token invalido."] },
       { status: 404 },
     );
   }
 
   if (!canOpenPrescriptionPdf(currentRecord)) {
     return NextResponse.json(
-      { errors: ["La receta está anulada o caducada."] },
+      { errors: ["La receta esta anulada o caducada."] },
       { status: 410 },
     );
   }
@@ -50,7 +89,7 @@ export async function POST(
 
   if (file.size > MAX_SIGNED_PDF_BYTES) {
     return NextResponse.json(
-      { errors: ["El PDF firmado supera el tamaño permitido."] },
+      { errors: ["El PDF firmado supera el tamano permitido."] },
       { status: 422 },
     );
   }
@@ -59,16 +98,22 @@ export async function POST(
 
   if (!buffer.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
     return NextResponse.json(
-      { errors: ["El archivo firmado debe ser un PDF válido."] },
+      { errors: ["El archivo firmado debe ser un PDF valido."] },
       { status: 422 },
     );
   }
 
-  const record = await saveSignedPrescriptionPdf(id, token, buffer, file.name);
+  const record = await saveSignedPrescriptionPdf(
+    id,
+    token,
+    buffer,
+    file.name,
+    locationSession,
+  );
 
   if (!record) {
     return NextResponse.json(
-      { errors: ["Receta no encontrada o token inválido."] },
+      { errors: ["Receta no encontrada o token invalido."] },
       { status: 404 },
     );
   }

@@ -6,7 +6,7 @@ import {
 import { createPrescriptionPdf } from "@/lib/prescriptionPdf";
 import {
   canOpenPrescriptionPdf,
-  getPrescriptionRecord,
+  getPrescriptionRecordByReadableToken,
   getSignedPrescriptionPdf,
 } from "@/lib/prescriptionStore";
 
@@ -18,9 +18,9 @@ export async function GET(
 ) {
   const { id } = await context.params;
   const token = request.nextUrl.searchParams.get("token") || "";
-  const record = await getPrescriptionRecord(id);
+  const record = await getPrescriptionRecordByReadableToken(id, token);
 
-  if (!record || record.token !== token) {
+  if (!record) {
     return NextResponse.json(
       { error: "Receta no encontrada o token inválido." },
       { status: 404 },

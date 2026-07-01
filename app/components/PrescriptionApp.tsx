@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
-import QRCode from "qrcode";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   type DigitalSignatureStamp,
@@ -49,6 +48,25 @@ type GhlContactDetailResponse = {
   error?: string;
 };
 
+type GhlSessionUser = {
+  userId: string;
+  companyId: string;
+  locationId: string;
+  role: string;
+  userName: string;
+  email: string;
+  isAgencyOwner: boolean;
+};
+
+type AuthStatus = "loading" | "authenticated" | "unauthenticated" | "error";
+
+type AuthResponse = {
+  token?: string;
+  expiresAt?: string;
+  user?: GhlSessionUser;
+  errors?: string[];
+};
+
 type PrescriptionLookupResponse =
   | CreatedPrescription
   | {
@@ -57,6 +75,39 @@ type PrescriptionLookupResponse =
 
 type SendPatientPdfResponse = {
   sent?: boolean;
+  record?: PrescriptionRecord;
+  errors?: string[];
+};
+
+type SignTokenResponse = {
+  token?: string;
+  expiresAt?: string;
+  errors?: string[];
+};
+
+type RubricResponse = {
+  rubric?: SignatureRubricState | null;
+  errors?: string[];
+};
+
+type PrescriptionHistoryItem = {
+  id: string;
+  status: "active" | "cancelled" | "expired";
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  patientName: string;
+  patientDocumentId: string;
+  contactId: string;
+  signed: boolean;
+  sent: boolean;
+  sentAt: string;
+  createdByName: string;
+  pdfUrlToken: string;
+};
+
+type PrescriptionHistoryResponse = {
+  items?: PrescriptionHistoryItem[];
   errors?: string[];
 };
 
@@ -76,7 +127,7 @@ type SignatureRubricState = {
 };
 
 const SIGNATURE_SECURITY_STORAGE_KEY = "duran.signatureSecurity";
-const SIGNATURE_RUBRIC_STORAGE_KEY = "duran.signatureRubric";
+const GHL_SESSION_STORAGE_KEY = "duran.ghlSession";
 const AUTOFIRMA_OPERATION_TIMEOUT_MS = 180000;
 const MAX_SIGNATURE_RUBRIC_WIDTH = 900;
 const MAX_SIGNATURE_RUBRIC_HEIGHT = 260;
@@ -162,6 +213,7 @@ declare global {
       enableErrorDialog?: (isEnabled: boolean) => void;
     };
     duranAutoScriptLoading?: Promise<void>;
+    exposeSessionDetails?: (appId?: string) => Promise<string>;
   }
 }
 
@@ -229,11 +281,9 @@ export default function PrescriptionApp() {
       "",
   });
   const [created, setCreated] = useState<CreatedPrescription | null>(null);
-  const [qrImage, setQrImage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isAutoSigning, setIsAutoSigning] = useState(false);
   const [isBrowserSigning, setIsBrowserSigning] = useState(false);
-  const [isUploadingSignedPdf, setIsUploadingSignedPdf] = useState(false);
   const [isSendingPatientPdf, setIsSendingPatientPdf] = useState(false);
   const [autoSignStatus, setAutoSignStatus] = useState("");
   const [patientSendStatus, setPatientSendStatus] = useState("");
@@ -255,6 +305,26 @@ export default function PrescriptionApp() {
       certificateFileName: "",
       certificateRegisteredAt: "",
     });
+  const [sessionToken, setSessionToken] = useState("");
+  const [sessionUser, setSessionUser] = useState<GhlSessionUser | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
+  const [authError, setAuthError] = useState("");
+  const [historyItems, setHistoryItems] = useState<PrescriptionHistoryItem[]>(
+    [],
+  );
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyStatus, setHistoryStatus] = useState<
+    "all" | "active" | "cancelled" | "expired"
+  >("all");
+  const [historySigned, setHistorySigned] = useState<
+    "all" | "signed" | "unsigned"
+  >("all");
+  const [historySent, setHistorySent] = useState<"all" | "sent" | "unsent">(
+    "all",
+  );
+  const [historyRefreshNonce, setHistoryRefreshNonce] = useState(0);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   const draftPayload = useMemo<PrescriptionPayload>(
     () =>
@@ -262,13 +332,20 @@ export default function PrescriptionApp() {
         id: buildPrescriptionId(),
         createdAt: new Date().toISOString(),
         expiresAt: getDefaultExpiryDate(),
-        locationId,
+        locationId: sessionUser?.locationId || locationId,
         contactId: selectedContactId,
         doctor,
         patient,
         prescription,
       }),
-    [doctor, locationId, patient, prescription, selectedContactId],
+    [
+      doctor,
+      locationId,
+      patient,
+      prescription,
+      selectedContactId,
+      sessionUser?.locationId,
+    ],
   );
   const validationErrors = validatePrescriptionPayload(draftPayload);
   const visibleErrors = serverErrors.length > 0 ? serverErrors : validationErrors;
@@ -276,7 +353,7 @@ export default function PrescriptionApp() {
     serverErrors.length > 0 ? "No se pudo completar la operacion" : "Faltan datos obligatorios";
   const isSigning = isAutoSigning || isBrowserSigning;
   const canGenerate =
-    validationErrors.length === 0 && !isSaving && !isSigning;
+    validationErrors.length === 0 && !isSaving && !isSigning && Boolean(sessionToken);
   const previewPrescription = getPrescriptionText(prescription);
 
   useEffect(() => {
@@ -290,12 +367,10 @@ export default function PrescriptionApp() {
       const parsed = JSON.parse(stored) as SignatureSecurityState;
       setSignatureSecurity({
         method:
-          parsed.method === "external"
-            ? "external"
-            : parsed.method === "browser-p12"
+          parsed.method === "browser-p12"
               ? "browser-p12"
               : parsed.method
-              ? "autofirma"
+                ? "autofirma"
               : "autofirma",
         certificateFileName: parsed.certificateFileName || "",
         certificateRegisteredAt: parsed.certificateRegisteredAt || "",
@@ -306,46 +381,139 @@ export default function PrescriptionApp() {
   }, []);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(SIGNATURE_RUBRIC_STORAGE_KEY);
+    let isActive = true;
 
-    if (!stored) {
-      return;
-    }
+    async function authenticate() {
+      const storedToken =
+        window.sessionStorage.getItem(GHL_SESSION_STORAGE_KEY) || "";
 
-    try {
-      const parsed = JSON.parse(stored) as SignatureRubricState;
+      if (storedToken) {
+        const restored = await restoreSession(storedToken);
 
-      if (!parsed.imageB64) {
-        window.localStorage.removeItem(SIGNATURE_RUBRIC_STORAGE_KEY);
+        if (isActive && restored) {
+          return;
+        }
+      }
+
+      if (signRecordId && signRecordToken) {
+        setAuthStatus("unauthenticated");
         return;
       }
 
-      setSignatureRubric({
-        fileName: parsed.fileName || "rubrica.jpg",
-        imageB64: parsed.imageB64 || "",
-        updatedAt: parsed.updatedAt || "",
-      });
-    } catch {
-      window.localStorage.removeItem(SIGNATURE_RUBRIC_STORAGE_KEY);
+      if (!isEmbeddedInFrame()) {
+        setAuthStatus("unauthenticated");
+        setAuthError("Abre la app desde la subcuenta para iniciar sesion.");
+        return;
+      }
+
+      try {
+        const encryptedData = await requestGhlEncryptedUserData();
+        const response = await fetch("/api/auth/ghl-sso", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ encryptedData }),
+        });
+        const data = (await response.json()) as AuthResponse;
+
+        if (!response.ok || !data.token || !data.user) {
+          throw new Error(
+            data.errors?.[0] || "No se pudo iniciar sesion.",
+          );
+        }
+
+        if (!isActive) {
+          return;
+        }
+
+        window.sessionStorage.setItem(GHL_SESSION_STORAGE_KEY, data.token);
+        setSessionToken(data.token);
+        setSessionUser(data.user);
+        setAuthStatus("authenticated");
+        setAuthError("");
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        window.sessionStorage.removeItem(GHL_SESSION_STORAGE_KEY);
+        setSessionToken("");
+        setSessionUser(null);
+        setAuthStatus("error");
+        setAuthError(
+          error instanceof Error
+            ? error.message
+            : "No se pudo iniciar sesion.",
+        );
+      }
     }
-  }, []);
+
+    async function restoreSession(token: string) {
+      try {
+        const response = await fetch("/api/auth/me", {
+          headers: getSessionHeaders(token),
+        });
+        const data = (await response.json()) as AuthResponse;
+
+        if (!response.ok || !data.user) {
+          window.sessionStorage.removeItem(GHL_SESSION_STORAGE_KEY);
+          return false;
+        }
+
+        setSessionToken(token);
+        setSessionUser(data.user);
+        setAuthStatus("authenticated");
+        setAuthError("");
+
+        return true;
+      } catch {
+        window.sessionStorage.removeItem(GHL_SESSION_STORAGE_KEY);
+        return false;
+      }
+    }
+
+    void authenticate();
+
+    return () => {
+      isActive = false;
+    };
+  }, [signRecordId, signRecordToken]);
 
   useEffect(() => {
-    if (!created?.verificationUrl) {
-      setQrImage("");
+    if (!sessionToken) {
+      if (!signRecordId || !signRecordToken) {
+        setSignatureRubric(emptySignatureRubric);
+      }
+
       return;
     }
 
-    QRCode.toDataURL(created.verificationUrl, {
-      errorCorrectionLevel: "M",
-      margin: 1,
-      width: 260,
-      color: {
-        dark: "#9d2f63",
-        light: "#ffffff",
-      },
-    }).then(setQrImage);
-  }, [created]);
+    const controller = new AbortController();
+
+    fetch("/api/signature/rubric", {
+      headers: getSessionHeaders(sessionToken),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = (await response.json()) as RubricResponse;
+
+        if (!response.ok) {
+          throw new Error(data.errors?.[0] || "No se pudo cargar la rubrica.");
+        }
+
+        setSignatureRubric(data.rubric || emptySignatureRubric);
+      })
+      .catch((error) => {
+        if ((error as Error).name !== "AbortError") {
+          setSignatureRubric(emptySignatureRubric);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [sessionToken, signRecordId, signRecordToken]);
 
   useEffect(() => {
     if (!signRecordId || !signRecordToken) {
@@ -373,6 +541,19 @@ export default function PrescriptionApp() {
         setAutoSignStatus(
           "Receta cargada en ventana externa. Pulsa Firmar con AutoFirma para continuar.",
         );
+        void fetchSignatureRubricForSignToken(
+          signRecordId,
+          signRecordToken,
+          controller.signal,
+        )
+          .then((rubric) => {
+            if (rubric) {
+              setSignatureRubric(rubric);
+            }
+          })
+          .catch(() => {
+            setSignatureRubric(emptySignatureRubric);
+          });
       })
       .catch((error) => {
         if ((error as Error).name !== "AbortError") {
@@ -393,7 +574,7 @@ export default function PrescriptionApp() {
   }, [signRecordId, signRecordToken]);
 
   useEffect(() => {
-    if (!contactId) {
+    if (!contactId || !sessionToken) {
       return;
     }
 
@@ -422,13 +603,13 @@ export default function PrescriptionApp() {
 
     setIsLoadingContactDetails(true);
 
-    fetchGhlContactDetail(contactId, controller.signal)
+    fetchGhlContactDetail(contactId, sessionToken, controller.signal)
       .then((contact) => {
         applyContact(mergeGhlContact(contact, fallbackContact));
       })
       .catch((error) => {
         if ((error as Error).name !== "AbortError") {
-          setContactSearchError("No se pudo cargar el contacto de GHL.");
+          setContactSearchError("No se pudo cargar el contacto.");
         }
       })
       .finally(() => {
@@ -438,7 +619,7 @@ export default function PrescriptionApp() {
     return () => {
       controller.abort();
     };
-  }, [contactId, params]);
+  }, [contactId, params, sessionToken]);
 
   useEffect(() => {
     const query = contactSearch.trim();
@@ -450,6 +631,17 @@ export default function PrescriptionApp() {
       return;
     }
 
+    if (!sessionToken) {
+      setContactResults([]);
+      setIsSearchingContacts(false);
+      setContactSearchError(
+        authStatus === "loading"
+          ? "Conectando..."
+          : "Inicia sesion para buscar contactos.",
+      );
+      return;
+    }
+
     const controller = new AbortController();
     const timeout = window.setTimeout(async () => {
       setIsSearchingContacts(true);
@@ -458,14 +650,17 @@ export default function PrescriptionApp() {
       try {
         const response = await fetch(
           `/api/ghl/contacts?q=${encodeURIComponent(query)}`,
-          { signal: controller.signal },
+          {
+            headers: getSessionHeaders(sessionToken),
+            signal: controller.signal,
+          },
         );
         const data = (await response.json()) as GhlContactSearchResponse;
 
         if (!response.ok) {
           setContactResults([]);
           setContactSearchError(
-            data.error || "No se pudieron cargar los contactos de GHL.",
+            data.error || "No se pudieron cargar los contactos.",
           );
           return;
         }
@@ -474,7 +669,7 @@ export default function PrescriptionApp() {
       } catch (error) {
         if ((error as Error).name !== "AbortError") {
           setContactResults([]);
-          setContactSearchError("No se pudieron cargar los contactos de GHL.");
+          setContactSearchError("No se pudieron cargar los contactos.");
         }
       } finally {
         setIsSearchingContacts(false);
@@ -485,7 +680,68 @@ export default function PrescriptionApp() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [contactSearch]);
+  }, [authStatus, contactSearch, sessionToken]);
+
+  useEffect(() => {
+    if (!sessionToken) {
+      setHistoryItems([]);
+      setHistoryError("");
+      setIsLoadingHistory(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      q: historySearch,
+      status: historyStatus,
+      signed: historySigned,
+      sent: historySent,
+      limit: "40",
+    });
+
+    setIsLoadingHistory(true);
+    setHistoryError("");
+
+    fetch(`/api/recetas/history?${params.toString()}`, {
+      headers: getSessionHeaders(sessionToken),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = (await response.json()) as PrescriptionHistoryResponse;
+
+        if (!response.ok) {
+          throw new Error(
+            data.errors?.[0] || "No se pudo cargar el historial.",
+          );
+        }
+
+        setHistoryItems(data.items || []);
+      })
+      .catch((error) => {
+        if ((error as Error).name !== "AbortError") {
+          setHistoryItems([]);
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : "No se pudo cargar el historial.",
+          );
+        }
+      })
+      .finally(() => {
+        setIsLoadingHistory(false);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    historyRefreshNonce,
+    historySearch,
+    historySent,
+    historySigned,
+    historyStatus,
+    sessionToken,
+  ]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -500,9 +756,32 @@ export default function PrescriptionApp() {
   }
 
   async function generatePrescription({
-    signatureMethod = "external",
+    signatureMethod = "autofirma",
   }: { signatureMethod?: SignatureMethod } = {}) {
     setServerErrors([]);
+
+    if (!sessionToken) {
+      setServerErrors(["Inicia sesion para crear recetas."]);
+      return;
+    }
+
+    const externalAutoFirmaWindow =
+      signatureMethod === "autofirma" && isEmbeddedInFrame()
+        ? window.open("about:blank", "_blank")
+        : null;
+
+    if (signatureMethod === "autofirma" && isEmbeddedInFrame()) {
+      if (!externalAutoFirmaWindow) {
+        setServerErrors([
+          "Chrome bloqueo la ventana externa de AutoFirma. Permite ventanas emergentes para esta web y vuelve a intentarlo.",
+        ]);
+        return;
+      }
+
+      externalAutoFirmaWindow.document.title = "Preparando AutoFirma";
+      externalAutoFirmaWindow.document.body.innerHTML =
+        "<p style=\"font-family:Arial,sans-serif;margin:24px\">Preparando AutoFirma...</p>";
+    }
 
     setIsSaving(true);
     let createdPrescription: CreatedPrescription | null = null;
@@ -511,6 +790,7 @@ export default function PrescriptionApp() {
       const response = await fetch("/api/recetas", {
         method: "POST",
         headers: {
+          ...getSessionHeaders(sessionToken),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -527,20 +807,40 @@ export default function PrescriptionApp() {
       if (!response.ok || !("record" in data)) {
         const errors = "errors" in data ? data.errors : undefined;
         setServerErrors(errors || ["No se pudo crear la receta."]);
+        externalAutoFirmaWindow?.close();
         return;
       }
 
       setCreated(data);
       createdPrescription = data;
+      setHistoryRefreshNonce((current) => current + 1);
       setIsSignatureDialogOpen(false);
+    } catch {
+      externalAutoFirmaWindow?.close();
+      setServerErrors(["No se pudo crear la receta."]);
     } finally {
       setIsSaving(false);
     }
 
     if (createdPrescription && signatureMethod === "autofirma") {
       if (isEmbeddedInFrame()) {
+        const temporaryToken = await createTemporarySignToken(createdPrescription);
+
+        if (!temporaryToken) {
+          externalAutoFirmaWindow?.close();
+          return;
+        }
+
+        if (externalAutoFirmaWindow) {
+          externalAutoFirmaWindow.location.href = buildStandaloneAutoFirmaUrl(
+            createdPrescription,
+            temporaryToken,
+          );
+          externalAutoFirmaWindow.opener = null;
+        }
+
         setAutoSignStatus(
-          "Receta generada. Pulsa Firmar con AutoFirma para abrir la ventana externa.",
+          "Se abrio una ventana externa para firmar con AutoFirma.",
         );
         return;
       }
@@ -558,6 +858,11 @@ export default function PrescriptionApp() {
       return;
     }
 
+    if (!sessionToken) {
+      setServerErrors(["Inicia sesion para anular recetas."]);
+      return;
+    }
+
     const shouldCancel = window.confirm("¿Anular esta receta?");
 
     if (!shouldCancel) {
@@ -567,6 +872,7 @@ export default function PrescriptionApp() {
     const response = await fetch(`/api/recetas/${created.record.id}/cancel`, {
       method: "POST",
       headers: {
+        ...getSessionHeaders(sessionToken),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ token: created.record.token }),
@@ -586,6 +892,7 @@ export default function PrescriptionApp() {
           }
         : current,
     );
+    setHistoryRefreshNonce((current) => current + 1);
   }
 
   async function saveSignedPdf(target: CreatedPrescription, file: File) {
@@ -597,6 +904,7 @@ export default function PrescriptionApp() {
       `/api/recetas/${target.record.id}/signed-pdf`,
       {
         method: "POST",
+        headers: getSessionHeaders(sessionToken),
         body: formData,
       },
     );
@@ -610,40 +918,19 @@ export default function PrescriptionApp() {
       return null;
     }
 
+    setHistoryRefreshNonce((current) => current + 1);
+
     return data.record;
-  }
-
-  async function uploadSignedPdf(file?: File) {
-    if (!created || !file) {
-      return;
-    }
-
-    setIsUploadingSignedPdf(true);
-    setServerErrors([]);
-
-    try {
-      const record = await saveSignedPdf(created, file);
-
-      if (!record) {
-        return;
-      }
-
-      setCreated((current) =>
-        current
-          ? {
-              ...current,
-              record,
-            }
-          : current,
-      );
-    } finally {
-      setIsUploadingSignedPdf(false);
-    }
   }
 
   async function sendSignedPdfToPatient(target: CreatedPrescription) {
     if (!target.record.signedPdf) {
       setServerErrors(["Firma primero el PDF antes de enviarlo al paciente."]);
+      return;
+    }
+
+    if (!sessionToken) {
+      setServerErrors(["Inicia sesion para enviar recetas."]);
       return;
     }
 
@@ -657,6 +944,7 @@ export default function PrescriptionApp() {
         {
           method: "POST",
           headers: {
+            ...getSessionHeaders(sessionToken),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ token: target.record.token }),
@@ -669,17 +957,67 @@ export default function PrescriptionApp() {
         return;
       }
 
+      if (data.record) {
+        setCreated((current) =>
+          current
+            ? {
+                ...current,
+                record: data.record as PrescriptionRecord,
+              }
+            : current,
+        );
+      }
+
       setPatientSendStatus("Enviado al paciente por SMS.");
+      setHistoryRefreshNonce((current) => current + 1);
     } finally {
       setIsSendingPatientPdf(false);
       window.setTimeout(() => setPatientSendStatus(""), 2400);
     }
   }
 
+  async function createTemporarySignToken(target: CreatedPrescription) {
+    try {
+      const response = await fetch(
+        `/api/recetas/${target.record.id}/sign-token`,
+        {
+          method: "POST",
+          headers: getSessionHeaders(sessionToken),
+        },
+      );
+      const data = (await response.json()) as SignTokenResponse;
+
+      if (!response.ok || !data.token) {
+        setServerErrors(
+          data.errors || ["No se pudo preparar el token temporal de firma."],
+        );
+        return "";
+      }
+
+      return data.token;
+    } catch {
+      setServerErrors(["No se pudo preparar el token temporal de firma."]);
+      return "";
+    }
+  }
+
   async function signPrescriptionWithAutoFirma(target: CreatedPrescription) {
     if (isEmbeddedInFrame()) {
+      if (!sessionToken) {
+        setServerErrors(["Inicia sesion para firmar recetas."]);
+        return;
+      }
+
+      setAutoSignStatus("Preparando ventana externa de AutoFirma...");
+
+      const temporaryToken = await createTemporarySignToken(target);
+
+      if (!temporaryToken) {
+        return;
+      }
+
       const opened = window.open(
-        buildStandaloneAutoFirmaUrl(target),
+        buildStandaloneAutoFirmaUrl(target, temporaryToken),
         "_blank",
         "noopener,noreferrer",
       );
@@ -692,7 +1030,7 @@ export default function PrescriptionApp() {
       }
 
       setAutoSignStatus(
-        "Se abrio una ventana externa para firmar con AutoFirma fuera de GHL.",
+        "Se abrio una ventana externa para firmar con AutoFirma.",
       );
       window.setTimeout(() => setAutoSignStatus(""), 5000);
       return;
@@ -700,7 +1038,7 @@ export default function PrescriptionApp() {
 
     setIsAutoSigning(true);
     setServerErrors([]);
-    setAutoSignStatus("Preparando PDF base para AutoFirma...");
+    setAutoSignStatus("Preparando PDF para AutoFirma...");
 
     try {
       const signedFile = await signPdfWithAutoFirma(
@@ -796,6 +1134,123 @@ export default function PrescriptionApp() {
       <section className="hero-panel">
         <div>
           <p className="eyebrow">Durán Ginecología</p>
+          <p className="session-line">
+            {authStatus === "authenticated"
+              ? `Sesion activa: ${sessionUser?.userName || sessionUser?.email || "usuario"}`
+              : authStatus === "loading"
+                ? "Conectando..."
+                : authError || "Sin sesion activa"}
+          </p>
+        </div>
+      </section>
+
+      <section className="history-panel" aria-label="Historial de recetas">
+        <div className="history-header">
+          <div>
+            <p className="eyebrow">Historial</p>
+            <h2>Recetas guardadas</h2>
+          </div>
+          <button
+            className="secondary-button compact-action"
+            disabled={!sessionToken || isLoadingHistory}
+            type="button"
+            onClick={() => setHistoryRefreshNonce((current) => current + 1)}
+          >
+            Actualizar
+          </button>
+        </div>
+        <div className="history-filters">
+          <label className="field">
+            <span>Buscar</span>
+            <input
+              disabled={!sessionToken}
+              placeholder="Paciente, DNI/NIE o codigo"
+              type="search"
+              value={historySearch}
+              onChange={(event) => setHistorySearch(event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Estado</span>
+            <select
+              disabled={!sessionToken}
+              value={historyStatus}
+              onChange={(event) =>
+                setHistoryStatus(event.target.value as typeof historyStatus)
+              }
+            >
+              <option value="all">Todas</option>
+              <option value="active">Activas</option>
+              <option value="cancelled">Anuladas</option>
+              <option value="expired">Caducadas</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Firma</span>
+            <select
+              disabled={!sessionToken}
+              value={historySigned}
+              onChange={(event) =>
+                setHistorySigned(event.target.value as typeof historySigned)
+              }
+            >
+              <option value="all">Todas</option>
+              <option value="signed">Firmadas</option>
+              <option value="unsigned">Sin firma</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Envio</span>
+            <select
+              disabled={!sessionToken}
+              value={historySent}
+              onChange={(event) =>
+                setHistorySent(event.target.value as typeof historySent)
+              }
+            >
+              <option value="all">Todas</option>
+              <option value="sent">Enviadas</option>
+              <option value="unsent">No enviadas</option>
+            </select>
+          </label>
+        </div>
+        <div className="history-list">
+          {historyError && <p className="contact-search-error">{historyError}</p>}
+          {!sessionToken && authStatus !== "loading" && (
+            <p className="contact-search-status">
+              El historial se activa al abrir la app desde la subcuenta.
+            </p>
+          )}
+          {isLoadingHistory && (
+            <p className="contact-search-status">Cargando historial...</p>
+          )}
+          {!isLoadingHistory &&
+            sessionToken &&
+            historyItems.length === 0 &&
+            !historyError && (
+              <p className="contact-search-status">Sin recetas guardadas.</p>
+            )}
+          {historyItems.map((item) => (
+            <button
+              className="history-item"
+              key={item.id}
+              type="button"
+              onClick={() => {
+                void loadHistoryPrescription(item);
+              }}
+            >
+              <span>
+                <strong>{item.patientName || "Paciente sin nombre"}</strong>
+                <small>{item.id}</small>
+              </span>
+              <span className="history-tags">
+                <small>{formatDate(item.createdAt)}</small>
+                <small>{historyStatusLabel(item.status)}</small>
+                <small>{item.signed ? "Firmada" : "Sin firma"}</small>
+                <small>{item.sent ? "Enviada" : "No enviada"}</small>
+              </span>
+            </button>
+          ))}
         </div>
       </section>
 
@@ -805,8 +1260,9 @@ export default function PrescriptionApp() {
             <legend>Paciente</legend>
             <div className="contact-picker">
               <label className="field">
-                <span>Buscar paciente en GHL</span>
+                <span>Buscar paciente</span>
                 <input
+                  disabled={!sessionToken}
                   type="search"
                   value={contactSearch}
                   placeholder="Nombre, email o teléfono"
@@ -855,7 +1311,7 @@ export default function PrescriptionApp() {
                     <p className="contact-selected">
                       {isLoadingContactDetails
                         ? "Cargando datos del contacto..."
-                        : `Contacto GHL: ${selectedContactId}`}
+                        : `Contacto seleccionado: ${selectedContactId}`}
                     </p>
                   )}
                 </div>
@@ -910,9 +1366,10 @@ export default function PrescriptionApp() {
             />
           </fieldset>
 
-          <fieldset>
-            <legend>Datos de la doctora</legend>
-            <div className="grid two">
+          <details className="doctor-details">
+            <summary>Datos de la doctora</summary>
+            <div className="doctor-details-body">
+              <div className="grid two">
               <TextField
                 label="Profesional"
                 value={doctor.name}
@@ -952,26 +1409,27 @@ export default function PrescriptionApp() {
                 value={doctor.phone}
                 onChange={(value) => updateDoctor("phone", value)}
               />
-            </div>
-            <TextField
+              </div>
+              <TextField
               label="Dirección profesional en España"
               value={doctor.address}
               required
               onChange={(value) => updateDoctor("address", value)}
             />
-            <TextField
+              <TextField
               label="Email profesional"
               value={doctor.email}
               type="email"
               onChange={(value) => updateDoctor("email", value)}
             />
-            <TextField
+              <TextField
               label="Web"
               value={doctor.website}
               type="url"
               onChange={(value) => updateDoctor("website", value)}
-            />
-          </fieldset>
+              />
+            </div>
+          </details>
 
           {visibleErrors.length > 0 && (
             <div className="validation-panel">
@@ -986,9 +1444,9 @@ export default function PrescriptionApp() {
 
           <div className="form-actions">
             <button className="primary-button" type="submit" disabled={!canGenerate}>
-              {isSaving || isAutoSigning || isLoadingPrescription
+              {isSaving || isSigning || isLoadingPrescription
                 ? "Procesando..."
-                : "Generar receta y QR"}
+                : "Generar PDF y QR"}
             </button>
           </div>
         </section>
@@ -1042,86 +1500,50 @@ export default function PrescriptionApp() {
           </div>
 
           <div className="qr-panel">
-            {created && qrImage ? (
+            {created ? (
               <>
-                <Image
-                  src={qrImage}
-                  alt="QR de verificación de la receta"
-                  width={220}
-                  height={220}
-                  unoptimized
-                />
                 <div>
                   <p className="qr-title">
                     {created.record.status === "cancelled"
                       ? "Receta anulada"
-                      : "Verificación lista"}
+                      : "Receta generada"}
                   </p>
                   <p className="qr-meta">{created.record.id}</p>
                   <p className="qr-meta">
                     Validez hasta {formatDate(created.record.expiresAt)}
                   </p>
                 </div>
-                <div className="actions-row">
+                <div className="actions-row recipe-actions">
                   <a
                     className="secondary-button"
-                    href={created.verificationUrl}
+                    href={created.pdfUrl}
                     target="_blank"
                   >
-                    Verificar
+                    Ver PDF
                   </a>
-                  {created.record.status !== "cancelled" && (
-                    <a
-                      className="secondary-button"
-                      href={getGeneratedPdfUrl(created.pdfUrl)}
-                      target="_blank"
-                      download={createPdfFileName(created.record.payload)}
-                    >
-                      PDF base
-                    </a>
-                  )}
+                  <button
+                    className="primary-button"
+                    disabled={
+                      !created.record.signedPdf ||
+                      created.record.status === "cancelled" ||
+                      isSendingPatientPdf ||
+                      isSigning
+                    }
+                    type="button"
+                    onClick={() => sendSignedPdfToPatient(created)}
+                  >
+                    {isSendingPatientPdf ? "Enviando..." : "Enviar a cliente"}
+                  </button>
                 </div>
                 {created.record.status !== "cancelled" && (
-                  <div className="signed-pdf-panel">
-                    <div>
-                      <p className="signed-pdf-title">
-                        {created.record.signedPdf
-                          ? "PDF firmado cargado"
-                          : "PDF firmado pendiente"}
-                      </p>
-                      <span>
-                        {created.record.signedPdf
-                          ? created.record.signedPdf.fileName
-                          : "Firma con AutoFirma o sube aqui el PDF firmado."}
-                      </span>
-                    </div>
-                    {!created.record.signedPdf && (
-                      <div className="signature-method-actions">
-                        <button
-                          className="primary-button compact-action"
-                          disabled={isSigning || isUploadingSignedPdf}
-                          type="button"
-                          onClick={() => {
-                            updateSignatureSecurity("autofirma");
-                            setSignatureDialogMode("sign-existing");
-                            setIsSignatureDialogOpen(true);
-                          }}
-                        >
-                          {isAutoSigning ? "Firmando..." : "Firmar con AutoFirma"}
-                        </button>
-                        <button
-                          className="secondary-button compact-action"
-                          disabled={isSigning || isUploadingSignedPdf}
-                          type="button"
-                          onClick={() => {
-                            updateSignatureSecurity("browser-p12");
-                            setSignatureDialogMode("sign-existing");
-                            setIsSignatureDialogOpen(true);
-                          }}
-                        >
-                          {isBrowserSigning ? "Firmando..." : "Firmar con .p12"}
-                        </button>
-                      </div>
+                  <div className="signed-pdf-panel compact-status-panel">
+                    <p className="signed-pdf-title">
+                      {created.record.signedPdf
+                        ? "PDF firmado listo"
+                        : "PDF pendiente de firma"}
+                    </p>
+                    {created.record.signedPdf && (
+                      <span>{created.record.signedPdf.fileName}</span>
                     )}
                     {autoSignStatus && (
                       <p className="signature-inline-status">{autoSignStatus}</p>
@@ -1130,43 +1552,6 @@ export default function PrescriptionApp() {
                       <p className="signature-inline-status">
                         {patientSendStatus}
                       </p>
-                    )}
-                    <label className="upload-signed-pdf">
-                      <input
-                        accept="application/pdf,.pdf"
-                        disabled={isUploadingSignedPdf || isSigning}
-                        type="file"
-                        onChange={(event) => {
-                          void uploadSignedPdf(event.target.files?.[0]);
-                          event.target.value = "";
-                        }}
-                      />
-                      {isUploadingSignedPdf ? "Subiendo..." : "Subir PDF firmado"}
-                    </label>
-                    <a
-                      className="secondary-button"
-                      href={created.pdfUrl}
-                      target="_blank"
-                    >
-                      {created.record.signedPdf
-                        ? "Abrir PDF firmado"
-                        : "PDF actual"}
-                    </a>
-                    {created.record.signedPdf && (
-                      <button
-                        className="primary-button"
-                        disabled={
-                          isSendingPatientPdf ||
-                          isSigning ||
-                          isUploadingSignedPdf
-                        }
-                        type="button"
-                        onClick={() => sendSignedPdfToPatient(created)}
-                      >
-                        {isSendingPatientPdf
-                          ? "Enviando..."
-                          : "Enviar a paciente"}
-                      </button>
                     )}
                   </div>
                 )}
@@ -1182,11 +1567,8 @@ export default function PrescriptionApp() {
               </>
             ) : (
               <div className="empty-state">
-                <p>El QR aparecerá aquí cuando generes la receta.</p>
-                <span>
-                  El QR abrirá una página de verificación con token; no incluirá
-                  los datos médicos dentro del enlace.
-                </span>
+                <p>La receta aparecerá aquí cuando generes el PDF.</p>
+                <span>El QR de verificación se incluirá dentro del PDF.</span>
               </div>
             )}
           </div>
@@ -1226,9 +1608,7 @@ export default function PrescriptionApp() {
                     ? browserCertificateFile
                       ? browserCertificateFile.name
                       : "Sube el archivo de certificado para firmar en el navegador."
-                  : signatureSecurity.method === "external"
-                    ? "Se generara el PDF base sin firma."
-                    : "Selecciona como se firmara el PDF."}
+                  : "Selecciona como se firmara el PDF."}
               </small>
             </div>
 
@@ -1339,7 +1719,7 @@ export default function PrescriptionApp() {
                 </label>
                 <p className="signature-caution">
                   Prueba experimental: la clave se procesa en este navegador y
-                  no se guarda en GHL ni en el servidor.
+                  no se guarda en el servidor.
                 </p>
               </div>
             )}
@@ -1353,18 +1733,6 @@ export default function PrescriptionApp() {
               >
                 Cancelar
               </button>
-              {signatureDialogMode === "create" && (
-                <button
-                  className="secondary-button"
-                  disabled={isSaving || isSigning || isPreparingRubric}
-                  type="button"
-                  onClick={() =>
-                    generatePrescription({ signatureMethod: "external" })
-                  }
-                >
-                  Solo PDF base
-                </button>
-              )}
               <button
                 className="primary-button"
                 disabled={isSaving || isSigning || isPreparingRubric}
@@ -1373,13 +1741,9 @@ export default function PrescriptionApp() {
               >
                 {isSaving || isSigning || isPreparingRubric
                   ? "Procesando..."
-                  : signatureSecurity.method === "external"
-                    ? "Generar PDF base y QR"
-                    : signatureDialogMode === "sign-existing"
-                      ? "Firmar PDF actual"
-                      : signatureSecurity.method === "browser-p12"
-                        ? "Generar y firmar con .p12"
-                        : "Generar y firmar con AutoFirma"}
+                  : signatureDialogMode === "sign-existing"
+                      ? "Firmar PDF"
+                      : "Generar PDF y QR"}
               </button>
             </div>
           </section>
@@ -1388,6 +1752,37 @@ export default function PrescriptionApp() {
     </main>
   );
 
+  async function loadHistoryPrescription(item: PrescriptionHistoryItem) {
+    setServerErrors([]);
+    setIsLoadingPrescription(true);
+
+    try {
+      const loaded = await fetchPrescriptionRecord(item.id, item.pdfUrlToken);
+
+      setCreated(loaded);
+      setDoctor(loaded.record.payload.doctor);
+      setPatient(loaded.record.payload.patient);
+      setPrescription(loaded.record.payload.prescription);
+      setSelectedContactId(loaded.record.contactId || "");
+      setContactSearch(
+        loaded.record.payload.patient.name ||
+          loaded.record.payload.patient.email ||
+          loaded.record.payload.patient.phone ||
+          "",
+      );
+      setAutoSignStatus("");
+      setPatientSendStatus("");
+    } catch (error) {
+      setServerErrors([
+        error instanceof Error
+          ? error.message
+          : "No se pudo cargar la receta del historial.",
+      ]);
+    } finally {
+      setIsLoadingPrescription(false);
+    }
+  }
+
   async function selectContact(contact: GhlContact) {
     setCreated(null);
     setServerErrors([]);
@@ -1395,17 +1790,17 @@ export default function PrescriptionApp() {
     setContactResults([]);
     setContactSearchError("");
 
-    if (!contact.id) {
+    if (!contact.id || !sessionToken) {
       return;
     }
 
     setIsLoadingContactDetails(true);
 
     try {
-      const detail = await fetchGhlContactDetail(contact.id);
+      const detail = await fetchGhlContactDetail(contact.id, sessionToken);
       applyContact(mergeGhlContact(detail, contact));
     } catch {
-      setContactSearchError("No se pudo cargar la ficha completa de GHL.");
+      setContactSearchError("No se pudo cargar la ficha completa.");
     } finally {
       setIsLoadingContactDetails(false);
     }
@@ -1463,9 +1858,38 @@ export default function PrescriptionApp() {
   async function updateSignatureRubric(file?: File) {
     setServerErrors([]);
 
+    if (!sessionToken) {
+      setServerErrors(["Inicia sesion para guardar la rubrica."]);
+      return;
+    }
+
     if (!file) {
-      setSignatureRubric(emptySignatureRubric);
-      window.localStorage.removeItem(SIGNATURE_RUBRIC_STORAGE_KEY);
+      setIsPreparingRubric(true);
+
+      try {
+        const response = await fetch("/api/signature/rubric", {
+          method: "DELETE",
+          headers: getSessionHeaders(sessionToken),
+        });
+
+        if (!response.ok) {
+          const data = (await response.json().catch(() => ({}))) as {
+            errors?: string[];
+          };
+          throw new Error(data.errors?.[0] || "No se pudo quitar la rubrica.");
+        }
+
+        setSignatureRubric(emptySignatureRubric);
+      } catch (error) {
+        setServerErrors([
+          error instanceof Error
+            ? error.message
+            : "No se pudo quitar la rubrica.",
+        ]);
+      } finally {
+        setIsPreparingRubric(false);
+      }
+
       return;
     }
 
@@ -1473,27 +1897,29 @@ export default function PrescriptionApp() {
 
     try {
       const imageB64 = await convertSignatureRubricFileToJpegBase64(file);
-      const next: SignatureRubricState = {
-        fileName: file.name || "rubrica.jpg",
-        imageB64,
-        updatedAt: new Date().toISOString(),
-      };
 
-      setSignatureRubric(next);
+      const response = await fetch("/api/signature/rubric", {
+        method: "POST",
+        headers: {
+          ...getSessionHeaders(sessionToken),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileName: file.name || "rubrica.jpg",
+          imageB64,
+        }),
+      });
+      const data = (await response.json()) as RubricResponse;
 
-      try {
-        window.localStorage.setItem(
-          SIGNATURE_RUBRIC_STORAGE_KEY,
-          JSON.stringify(next),
+      if (!response.ok || !data.rubric) {
+        throw new Error(
+          data.errors?.[0] || "No se pudo guardar la rubrica visual.",
         );
-      } catch {
-        setServerErrors([
-          "La rubrica se usara en esta sesion, pero el navegador no pudo guardarla localmente.",
-        ]);
       }
+
+      setSignatureRubric(data.rubric);
     } catch (error) {
       setSignatureRubric(emptySignatureRubric);
-      window.localStorage.removeItem(SIGNATURE_RUBRIC_STORAGE_KEY);
       setServerErrors([
         error instanceof Error
           ? error.message
@@ -1537,18 +1963,43 @@ export default function PrescriptionApp() {
 
 }
 
-async function fetchGhlContactDetail(contactId: string, signal?: AbortSignal) {
+async function fetchGhlContactDetail(
+  contactId: string,
+  sessionToken: string,
+  signal?: AbortSignal,
+) {
   const response = await fetch(
     `/api/ghl/contacts/${encodeURIComponent(contactId)}`,
-    { signal },
+    {
+      headers: getSessionHeaders(sessionToken),
+      signal,
+    },
   );
   const data = (await response.json()) as GhlContactDetailResponse;
 
   if (!response.ok || !data.contact) {
-    throw new Error(data.error || "No se pudo cargar el contacto de GHL.");
+    throw new Error(data.error || "No se pudo cargar el contacto.");
   }
 
   return data.contact;
+}
+
+async function fetchSignatureRubricForSignToken(
+  recordId: string,
+  token: string,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(
+    `/api/recetas/${encodeURIComponent(recordId)}/sign-rubric?token=${encodeURIComponent(token)}`,
+    { signal },
+  );
+  const data = (await response.json()) as RubricResponse;
+
+  if (!response.ok) {
+    throw new Error(data.errors?.[0] || "No se pudo cargar la rubrica.");
+  }
+
+  return data.rubric || null;
 }
 
 async function fetchPrescriptionRecord(
@@ -1620,10 +2071,13 @@ function createSignedPdfFileName(payload: PrescriptionPayload) {
   return createPdfFileName(payload).replace(/\.pdf$/i, "-firmado.pdf");
 }
 
-function buildStandaloneAutoFirmaUrl(target: CreatedPrescription) {
+function buildStandaloneAutoFirmaUrl(
+  target: CreatedPrescription,
+  signToken = target.record.token,
+) {
   const url = new URL(window.location.href);
   url.searchParams.set("signRecordId", target.record.id);
-  url.searchParams.set("signToken", target.record.token);
+  url.searchParams.set("signToken", signToken);
   url.searchParams.delete("contactId");
   url.searchParams.delete("contact_id");
   url.searchParams.delete("token");
@@ -1637,6 +2091,65 @@ function isEmbeddedInFrame() {
   } catch {
     return true;
   }
+}
+
+function getSessionHeaders(sessionToken: string): Record<string, string> {
+  return sessionToken
+    ? {
+        Authorization: `Bearer ${sessionToken}`,
+      }
+    : {};
+}
+
+function requestGhlEncryptedUserData() {
+  if (typeof window.exposeSessionDetails === "function") {
+    return window.exposeSessionDetails(
+      process.env.NEXT_PUBLIC_GHL_APP_ID || undefined,
+    );
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      window.removeEventListener("message", handleMessage);
+      reject(new Error("No se pudo leer la sesion de usuario."));
+    }, 8000);
+
+    function handleMessage(event: MessageEvent) {
+      const data = event.data as {
+        message?: string;
+        payload?: unknown;
+      };
+
+      if (data?.message !== "REQUEST_USER_DATA_RESPONSE") {
+        return;
+      }
+
+      window.clearTimeout(timeout);
+      window.removeEventListener("message", handleMessage);
+
+      if (typeof data.payload !== "string") {
+        reject(new Error("La sesion recibida esta vacia."));
+        return;
+      }
+
+      resolve(data.payload);
+    }
+
+    window.addEventListener("message", handleMessage);
+    window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
+  });
+}
+
+function historyStatusLabel(status: PrescriptionHistoryItem["status"]) {
+  if (status === "cancelled") {
+    return "Anulada";
+  }
+
+  if (status === "expired") {
+    return "Caducada";
+  }
+
+  return "Activa";
 }
 
 async function signPdfWithAutoFirma(
@@ -1655,19 +2168,19 @@ async function signPdfWithAutoFirma(
   await loadAutoScript();
   const autoScript = configureAutoFirmaClient();
 
-  updateStatus("Descargando PDF base para firmar...");
+  updateStatus("Descargando PDF para firmar...");
   const pdfResponse = await fetch(getGeneratedPdfUrl(pdfUrl), {
     cache: "no-store",
   });
 
   if (!pdfResponse.ok) {
-    throw new Error("No se pudo descargar el PDF base para firmarlo.");
+    throw new Error("No se pudo descargar el PDF para firmarlo.");
   }
 
   const pdfBlob = await pdfResponse.blob();
 
   if (pdfBlob.size === 0) {
-    throw new Error("El PDF base esta vacio.");
+    throw new Error("El PDF esta vacio.");
   }
 
   updateStatus(
@@ -1727,7 +2240,7 @@ async function signPdfWithBrowserCertificate(
   );
 
   if (!pdfResponse.ok) {
-    throw new Error("No se pudo descargar el PDF base para firmarlo.");
+    throw new Error("No se pudo descargar el PDF para firmarlo.");
   }
 
   const pdfBuffer = bufferModule.Buffer.from(await pdfResponse.arrayBuffer());
@@ -2059,7 +2572,7 @@ function blobToBase64(blob: Blob) {
       const [, base64 = ""] = result.split(",");
       resolve(base64);
     };
-    reader.onerror = () => reject(new Error("No se pudo leer el PDF base."));
+    reader.onerror = () => reject(new Error("No se pudo leer el PDF."));
     reader.readAsDataURL(blob);
   });
 }

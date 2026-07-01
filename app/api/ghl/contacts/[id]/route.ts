@@ -1,12 +1,22 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { requireLocationSession } from "@/lib/authSession";
 import { GhlConfigurationError, getGhlContact } from "@/lib/ghl";
 
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const session = requireLocationSession(request);
+
+  if (!session) {
+    return NextResponse.json(
+      { error: "Inicia sesion para cargar contactos." },
+      { status: 401 },
+    );
+  }
+
   const { id } = await context.params;
 
   try {
@@ -14,7 +24,7 @@ export async function GET(
 
     if (!contact) {
       return NextResponse.json(
-        { error: "Contacto no encontrado en GHL." },
+        { error: "Contacto no encontrado." },
         { status: 404 },
       );
     }
@@ -26,7 +36,7 @@ export async function GET(
     }
 
     return NextResponse.json(
-      { error: "No se pudo cargar el contacto de GHL." },
+      { error: "No se pudo cargar el contacto." },
       { status: 502 },
     );
   }

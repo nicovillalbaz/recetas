@@ -27,6 +27,7 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/sql.js ./node_modules/sql.js
 
 RUN mkdir -p /app/.data
 RUN chown -R nextjs:nodejs /app/.data

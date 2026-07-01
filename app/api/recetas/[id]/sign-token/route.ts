@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireLocationSession } from "@/lib/authSession";
 import {
-  cancelPrescriptionRecord,
+  canOpenPrescriptionPdf,
+  createPrescriptionSignToken,
   getPrescriptionRecord,
 } from "@/lib/prescriptionStore";
 
@@ -15,30 +16,36 @@ export async function POST(
 
   if (!session) {
     return NextResponse.json(
-      { errors: ["Inicia sesion para anular recetas."] },
+      { errors: ["Sesion no valida o caducada."] },
       { status: 401 },
     );
   }
 
   const { id } = await context.params;
-  const body = (await request.json().catch(() => ({}))) as { token?: string };
-  const currentRecord = await getPrescriptionRecord(id);
+  const record = await getPrescriptionRecord(id);
 
-  if (!currentRecord || currentRecord.locationId !== session.locationId) {
+  if (!record || record.locationId !== session.locationId) {
     return NextResponse.json(
       { errors: ["Receta no encontrada."] },
       { status: 404 },
     );
   }
 
-  const record = await cancelPrescriptionRecord(id, body.token || "", session);
-
-  if (!record) {
+  if (!canOpenPrescriptionPdf(record)) {
     return NextResponse.json(
-      { errors: ["No se pudo anular la receta."] },
+      { errors: ["La receta esta anulada o caducada."] },
+      { status: 410 },
+    );
+  }
+
+  const signToken = await createPrescriptionSignToken(id, session);
+
+  if (!signToken) {
+    return NextResponse.json(
+      { errors: ["No se pudo generar el token de firma."] },
       { status: 404 },
     );
   }
 
-  return NextResponse.json({ record });
+  return NextResponse.json(signToken);
 }
