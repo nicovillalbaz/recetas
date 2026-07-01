@@ -2305,6 +2305,18 @@ function extractRequestUserDataPayload(data: unknown) {
     "payload" in (eventData.data as Record<string, unknown>)
       ? (eventData.data as { payload?: unknown }).payload
       : "",
+    typeof eventData.payload === "object" &&
+    eventData.payload &&
+    !Array.isArray(eventData.payload as Record<string, unknown>) &&
+    "encryptedData" in (eventData.payload as Record<string, unknown>)
+      ? (eventData.payload as { encryptedData?: unknown }).encryptedData
+      : "",
+    typeof eventData.data === "object" &&
+    eventData.data &&
+    !Array.isArray(eventData.data as Record<string, unknown>) &&
+    "encryptedData" in (eventData.data as Record<string, unknown>)
+      ? (eventData.data as { encryptedData?: unknown }).encryptedData
+      : "",
   ];
 
   for (const candidate of candidates) {
