@@ -2206,7 +2206,7 @@ function getGeneratedPdfUrl(
     }
   }
 
-  return url.toString();
+  return new URL(url.pathname + url.search + url.hash, window.location.origin).toString();
 }
 
 function createSignedPdfFileName(payload: PrescriptionPayload) {

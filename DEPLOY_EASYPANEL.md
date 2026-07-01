@@ -17,7 +17,7 @@ GHL_LOCATION_ID=oHE4xQTwNInUOTgcLcJJ
 GHL_API_VERSION=2021-07-28
 
 GHL_APP_SHARED_SECRET=shared_secret_de_marketplace_app
-APP_SESSION_SECRET=secreto_largo_para_firmar_sesiones
+APP_SESSION_SECRET=un-texto-largo-seguro-para-firmar-sesiones
 APP_ENCRYPTION_KEY=clave_base64_de_32_bytes
 APP_DATA_DIR=/app/.data
 GHL_ALLOW_LOCATION_ONLY_AUTH=1
@@ -46,6 +46,23 @@ ser una clave de 32 bytes en base64, por ejemplo generada con:
 ```bash
 openssl rand -base64 32
 ```
+
+Para `APP_SESSION_SECRET` usa un texto largo aleatorio (mínimo 64 caracteres, sin
+saltos de línea). En Linux/macOS:
+
+```bash
+openssl rand -base64 64
+```
+
+En Windows (PowerShell):
+
+```powershell
+$bytes = New-Object byte[] 64
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+[Convert]::ToBase64String($bytes)
+```
+
+En EasyPanel, agregalo en **App → Variables de Entorno** y vuelve a levantar/redeployar la app.
 
 ## Permisos GHL
 
