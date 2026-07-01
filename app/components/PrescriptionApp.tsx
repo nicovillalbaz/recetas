@@ -69,8 +69,17 @@ type SignatureSecurityState = {
   certificateRegisteredAt: string;
 };
 
+type SignatureRubricState = {
+  fileName: string;
+  imageB64: string;
+  updatedAt: string;
+};
+
 const SIGNATURE_SECURITY_STORAGE_KEY = "duran.signatureSecurity";
+const SIGNATURE_RUBRIC_STORAGE_KEY = "duran.signatureRubric";
 const AUTOFIRMA_OPERATION_TIMEOUT_MS = 180000;
+const MAX_SIGNATURE_RUBRIC_WIDTH = 900;
+const MAX_SIGNATURE_RUBRIC_HEIGHT = 260;
 
 type AutoScriptApi = {
   AUTOFIRMA_CONNECTION_RETRIES?: number;
@@ -164,6 +173,12 @@ const signatureLines = [
   "76012671V",
 ];
 
+const emptySignatureRubric: SignatureRubricState = {
+  fileName: "",
+  imageB64: "",
+  updatedAt: "",
+};
+
 export default function PrescriptionApp() {
   const params = useSearchParams();
   const locationId = params.get("locationId") || params.get("location_id") || "";
@@ -231,6 +246,9 @@ export default function PrescriptionApp() {
     useState<File | null>(null);
   const [browserCertificatePassphrase, setBrowserCertificatePassphrase] =
     useState("");
+  const [signatureRubric, setSignatureRubric] =
+    useState<SignatureRubricState>(emptySignatureRubric);
+  const [isPreparingRubric, setIsPreparingRubric] = useState(false);
   const [signatureSecurity, setSignatureSecurity] =
     useState<SignatureSecurityState>({
       method: "autofirma",
@@ -284,6 +302,31 @@ export default function PrescriptionApp() {
       });
     } catch {
       window.localStorage.removeItem(SIGNATURE_SECURITY_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(SIGNATURE_RUBRIC_STORAGE_KEY);
+
+    if (!stored) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as SignatureRubricState;
+
+      if (!parsed.imageB64) {
+        window.localStorage.removeItem(SIGNATURE_RUBRIC_STORAGE_KEY);
+        return;
+      }
+
+      setSignatureRubric({
+        fileName: parsed.fileName || "rubrica.jpg",
+        imageB64: parsed.imageB64 || "",
+        updatedAt: parsed.updatedAt || "",
+      });
+    } catch {
+      window.localStorage.removeItem(SIGNATURE_RUBRIC_STORAGE_KEY);
     }
   }, []);
 
@@ -664,6 +707,7 @@ export default function PrescriptionApp() {
         target.pdfUrl,
         createSignedPdfFileName(target.record.payload),
         setAutoSignStatus,
+        signatureRubric.imageB64,
       );
 
       setAutoSignStatus("Guardando PDF firmado en la receta...");
@@ -1057,7 +1101,11 @@ export default function PrescriptionApp() {
                           className="primary-button compact-action"
                           disabled={isSigning || isUploadingSignedPdf}
                           type="button"
-                          onClick={() => signPrescriptionWithAutoFirma(created)}
+                          onClick={() => {
+                            updateSignatureSecurity("autofirma");
+                            setSignatureDialogMode("sign-existing");
+                            setIsSignatureDialogOpen(true);
+                          }}
                         >
                           {isAutoSigning ? "Firmando..." : "Firmar con AutoFirma"}
                         </button>
@@ -1171,7 +1219,9 @@ export default function PrescriptionApp() {
               </strong>
               <small>
                 {signatureSecurity.method === "autofirma"
-                  ? "AutoFirma usara el certificado instalado en el equipo cuando este disponible."
+                  ? signatureRubric.imageB64
+                    ? `AutoFirma usara el certificado instalado y la rubrica visual ${signatureRubric.fileName}.`
+                    : "AutoFirma usara el certificado instalado en el equipo cuando este disponible."
                   : signatureSecurity.method === "browser-p12"
                     ? browserCertificateFile
                       ? browserCertificateFile.name
@@ -1214,6 +1264,56 @@ export default function PrescriptionApp() {
               </button>
             </div>
 
+            {signatureSecurity.method === "autofirma" && (
+              <div className="signature-rubric-panel">
+                <label className="field">
+                  <span>Rubrica visual opcional</span>
+                  <input
+                    accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                    disabled={isPreparingRubric}
+                    type="file"
+                    onChange={(event) => {
+                      void updateSignatureRubric(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+                {signatureRubric.imageB64 ? (
+                  <div className="signature-rubric-preview">
+                    <Image
+                      alt="Rubrica visual seleccionada"
+                      height={86}
+                      src={`data:image/jpeg;base64,${signatureRubric.imageB64}`}
+                      unoptimized
+                      width={260}
+                    />
+                    <div>
+                      <strong>{signatureRubric.fileName}</strong>
+                      <button
+                        className="secondary-button compact-action"
+                        disabled={isPreparingRubric || isSigning}
+                        type="button"
+                        onClick={() => {
+                          void updateSignatureRubric();
+                        }}
+                      >
+                        Quitar rubrica
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="signature-caution">
+                    Si subes una imagen PNG o JPG, se usara como apariencia
+                    visual fija de AutoFirma. La validez seguira dependiendo del
+                    certificado digital.
+                  </p>
+                )}
+                {isPreparingRubric && (
+                  <p className="signature-caution">Preparando imagen...</p>
+                )}
+              </div>
+            )}
+
             {signatureSecurity.method === "browser-p12" && (
               <div className="browser-certificate-panel">
                 <label className="field">
@@ -1247,7 +1347,7 @@ export default function PrescriptionApp() {
             <div className="signature-dialog-actions">
               <button
                 className="secondary-button"
-                disabled={isSaving || isSigning}
+                disabled={isSaving || isSigning || isPreparingRubric}
                 type="button"
                 onClick={() => setIsSignatureDialogOpen(false)}
               >
@@ -1256,7 +1356,7 @@ export default function PrescriptionApp() {
               {signatureDialogMode === "create" && (
                 <button
                   className="secondary-button"
-                  disabled={isSaving || isSigning}
+                  disabled={isSaving || isSigning || isPreparingRubric}
                   type="button"
                   onClick={() =>
                     generatePrescription({ signatureMethod: "external" })
@@ -1267,11 +1367,11 @@ export default function PrescriptionApp() {
               )}
               <button
                 className="primary-button"
-                disabled={isSaving || isSigning}
+                disabled={isSaving || isSigning || isPreparingRubric}
                 type="button"
                 onClick={runSelectedSignatureFlow}
               >
-                {isSaving || isSigning
+                {isSaving || isSigning || isPreparingRubric
                   ? "Procesando..."
                   : signatureSecurity.method === "external"
                     ? "Generar PDF base y QR"
@@ -1358,6 +1458,50 @@ export default function PrescriptionApp() {
       SIGNATURE_SECURITY_STORAGE_KEY,
       JSON.stringify(next),
     );
+  }
+
+  async function updateSignatureRubric(file?: File) {
+    setServerErrors([]);
+
+    if (!file) {
+      setSignatureRubric(emptySignatureRubric);
+      window.localStorage.removeItem(SIGNATURE_RUBRIC_STORAGE_KEY);
+      return;
+    }
+
+    setIsPreparingRubric(true);
+
+    try {
+      const imageB64 = await convertSignatureRubricFileToJpegBase64(file);
+      const next: SignatureRubricState = {
+        fileName: file.name || "rubrica.jpg",
+        imageB64,
+        updatedAt: new Date().toISOString(),
+      };
+
+      setSignatureRubric(next);
+
+      try {
+        window.localStorage.setItem(
+          SIGNATURE_RUBRIC_STORAGE_KEY,
+          JSON.stringify(next),
+        );
+      } catch {
+        setServerErrors([
+          "La rubrica se usara en esta sesion, pero el navegador no pudo guardarla localmente.",
+        ]);
+      }
+    } catch (error) {
+      setSignatureRubric(emptySignatureRubric);
+      window.localStorage.removeItem(SIGNATURE_RUBRIC_STORAGE_KEY);
+      setServerErrors([
+        error instanceof Error
+          ? error.message
+          : "No se pudo preparar la rubrica visual.",
+      ]);
+    } finally {
+      setIsPreparingRubric(false);
+    }
   }
 
   function updateSignatureSecurity(method: SignatureMethod) {
@@ -1499,6 +1643,7 @@ async function signPdfWithAutoFirma(
   pdfUrl: string,
   fileName: string,
   updateStatus: (status: string) => void,
+  signatureRubricImageB64 = "",
 ) {
   if (isMobileUserAgent()) {
     throw new Error(
@@ -1526,11 +1671,11 @@ async function signPdfWithAutoFirma(
   }
 
   updateStatus(
-    "Cuando Chrome lo pida, permite abrir AutoFirma y completa la firma.",
+    "Cuando Chrome lo pida, permite abrir AutoFirma y completa la firma visible.",
   );
   const pdfB64 = await blobToBase64(pdfBlob);
   const signedPdfB64 = await withTimeout(
-    signBase64WithAutoFirma(autoScript, pdfB64),
+    signBase64WithAutoFirma(autoScript, pdfB64, signatureRubricImageB64),
     AUTOFIRMA_OPERATION_TIMEOUT_MS,
     "AutoFirma no respondio despues de 3 minutos. Cierra AutoFirma/OpenJDK desde el administrador de tareas, restaura la instalacion desde AutoFirma y vuelve a intentarlo.",
   );
@@ -1660,13 +1805,17 @@ function configureAutoFirmaClient() {
   return autoScript;
 }
 
-function signBase64WithAutoFirma(autoScript: AutoScriptApi, pdfB64: string) {
+function signBase64WithAutoFirma(
+  autoScript: AutoScriptApi,
+  pdfB64: string,
+  signatureRubricImageB64 = "",
+) {
   return new Promise<string>((resolve, reject) => {
     autoScript.sign(
       pdfB64,
       "SHA256withRSA",
       "PAdES",
-      null,
+      createAutoFirmaVisibleSignatureParams(signatureRubricImageB64),
       (signatureB64) => resolve(signatureB64),
       (errorType, errorMessage) =>
         reject(
@@ -1677,6 +1826,32 @@ function signBase64WithAutoFirma(autoScript: AutoScriptApi, pdfB64: string) {
         ),
     );
   });
+}
+
+function createAutoFirmaVisibleSignatureParams(signatureRubricImageB64 = "") {
+  const params = [
+    "signaturePage=1",
+    "signaturePositionOnPageLowerLeftX=155",
+    "signaturePositionOnPageLowerLeftY=198",
+    "signaturePositionOnPageUpperRightX=440",
+    "signaturePositionOnPageUpperRightY=264",
+    "layer2Text=Firmado digitalmente por $$SUBJECTCN$$\\nFecha: $$SIGNDATE=dd/MM/yyyy HH:mm:ss$$",
+    "layer2FontFamily=1",
+    "layer2FontSize=8",
+    "layer2FontStyle=0",
+    "layer2FontColor=black",
+    "signReason=Firma de receta medica privada",
+    "signatureProductionCity=Coria",
+    "signerContact=info@duranginecologia.com",
+  ];
+
+  if (signatureRubricImageB64) {
+    params.push(
+      `signatureRubricImage=${signatureRubricImageB64.replace(/\s/g, "")}`,
+    );
+  }
+
+  return params.join("\n");
 }
 
 function withTimeout<T>(
@@ -1886,6 +2061,71 @@ function blobToBase64(blob: Blob) {
     };
     reader.onerror = () => reject(new Error("No se pudo leer el PDF base."));
     reader.readAsDataURL(blob);
+  });
+}
+
+async function convertSignatureRubricFileToJpegBase64(file: File) {
+  const isAcceptedImage =
+    file.type.startsWith("image/") || /\.(png|jpe?g)$/i.test(file.name);
+
+  if (!isAcceptedImage) {
+    throw new Error("Sube una rubrica visual en formato PNG o JPG.");
+  }
+
+  const dataUrl = await fileToDataUrl(file);
+  const image = await loadImageElement(dataUrl);
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+
+  if (!sourceWidth || !sourceHeight) {
+    throw new Error("No se pudo leer el tamano de la rubrica visual.");
+  }
+
+  const scale = Math.min(
+    MAX_SIGNATURE_RUBRIC_WIDTH / sourceWidth,
+    MAX_SIGNATURE_RUBRIC_HEIGHT / sourceHeight,
+    1,
+  );
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    throw new Error("No se pudo preparar la rubrica visual.");
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+
+  const [, imageB64 = ""] = canvas.toDataURL("image/jpeg", 0.88).split(",");
+
+  if (!imageB64) {
+    throw new Error("No se pudo convertir la rubrica visual a JPEG.");
+  }
+
+  return imageB64;
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No se pudo leer la imagen."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new window.Image();
+    image.onload = () => resolve(image);
+    image.onerror = () =>
+      reject(new Error("No se pudo cargar la rubrica visual."));
+    image.src = dataUrl;
   });
 }
 

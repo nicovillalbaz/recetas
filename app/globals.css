@@ -379,6 +379,43 @@ legend {
   padding: 14px;
 }
 
+.signature-rubric-panel {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.signature-rubric-preview {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.signature-rubric-preview img {
+  background: white;
+  border: 1px solid var(--line);
+  max-height: 86px;
+  max-width: 100%;
+  object-fit: contain;
+  padding: 8px;
+}
+
+.signature-rubric-preview div {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.signature-rubric-preview strong {
+  color: var(--foreground);
+  font-size: 12px;
+  max-width: 180px;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 .signature-caution {
   color: var(--muted);
   font-size: 12px;
