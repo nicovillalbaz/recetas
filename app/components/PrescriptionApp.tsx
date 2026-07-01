@@ -235,7 +235,7 @@ const emptySignatureRubric: SignatureRubricState = {
 
 export default function PrescriptionApp() {
   const params = useSearchParams();
-  const locationId = params.get("locationId") || params.get("location_id") || "";
+  const locationId = resolveLocationIdFromContext(params);
   const contactId = params.get("contactId") || params.get("contact_id") || "";
   const signRecordId =
     params.get("signRecordId") ||
@@ -2314,6 +2314,41 @@ function extractRequestUserDataPayload(data: unknown) {
   }
 
   return "";
+}
+
+function resolveLocationIdFromContext(params: {
+  get(name: string): string | null;
+}) {
+  const queryLocationId = params.get("locationId") || params.get("location_id") || "";
+
+  if (queryLocationId) {
+    return queryLocationId;
+  }
+
+  return (
+    extractLocationIdFromPath(window.location.pathname) ||
+    extractLocationIdFromReferrer()
+  );
+}
+
+function extractLocationIdFromPath(path: string) {
+  const match = path.match(/\/location\/([^/?#]+)/i);
+
+  return match?.[1] || "";
+}
+
+function extractLocationIdFromReferrer() {
+  if (!document.referrer) {
+    return "";
+  }
+
+  try {
+    const referrerUrl = new URL(document.referrer);
+
+    return extractLocationIdFromPath(referrerUrl.pathname);
+  } catch {
+    return "";
+  }
 }
 
 function historyStatusLabel(status: PrescriptionHistoryItem["status"]) {
