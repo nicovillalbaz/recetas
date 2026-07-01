@@ -2232,9 +2232,9 @@ async function requestGhlEncryptedUserData() {
 
 function requestSessionDetailsByPostMessage(appId?: string) {
   const requestPayload = { message: "REQUEST_USER_DATA", appId };
-  const requestTargets = [window.parent];
+  const requestTargets: Array<Window | WindowProxy> = [window.parent];
 
-  if (window.top !== window.parent) {
+  if (window.top && window.top !== window.parent) {
     requestTargets.push(window.top);
   }
 
@@ -2261,7 +2261,7 @@ function requestSessionDetailsByPostMessage(appId?: string) {
       resolve(payload.trim());
     }
 
-    function sendRequestMessage(target: Window) {
+    function sendRequestMessage(target: Window | WindowProxy) {
       try {
         target.postMessage(requestPayload, "*");
       } catch {
