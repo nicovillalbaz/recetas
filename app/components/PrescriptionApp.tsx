@@ -2231,7 +2231,11 @@ async function requestGhlEncryptedUserData() {
 }
 
 function requestSessionDetailsByPostMessage(appId?: string) {
-  const requestPayload = { message: "REQUEST_USER_DATA", appId };
+  const requestPayloads = [
+    { message: "REQUEST_USER_DATA", appId },
+    { type: "REQUEST_USER_DATA", appId },
+    { event: "REQUEST_USER_DATA", appId },
+  ];
   const requestTargets: Array<Window | WindowProxy> = [window.parent];
 
   if (window.top && window.top !== window.parent) {
@@ -2263,7 +2267,9 @@ function requestSessionDetailsByPostMessage(appId?: string) {
 
     function sendRequestMessage(target: Window | WindowProxy) {
       try {
-        target.postMessage(requestPayload, "*");
+        for (const payload of requestPayloads) {
+          target.postMessage(payload, "*");
+        }
       } catch {
         // Ignore failures for invalid targets/cross-origin edge cases.
       }
@@ -2274,7 +2280,7 @@ function requestSessionDetailsByPostMessage(appId?: string) {
   });
 }
 
-function extractRequestUserDataPayload(data: unknown) {
+function extractRequestUserDataPayload(data: unknown): string {
   if (!data || typeof data !== "object") {
     return "";
   }
@@ -2285,6 +2291,7 @@ function extractRequestUserDataPayload(data: unknown) {
     event?: string;
     payload?: unknown;
     data?: unknown;
+    [key: string]: unknown;
   };
 
   const isResponse =
@@ -2296,32 +2303,55 @@ function extractRequestUserDataPayload(data: unknown) {
     return "";
   }
 
-  const candidates = [
-    eventData.payload,
-    eventData.data,
-    typeof eventData.data === "object" &&
-    eventData.data !== null &&
-    !Array.isArray(eventData.data) &&
-    "payload" in (eventData.data as Record<string, unknown>)
-      ? (eventData.data as { payload?: unknown }).payload
-      : "",
-    typeof eventData.payload === "object" &&
-    eventData.payload &&
-    !Array.isArray(eventData.payload as Record<string, unknown>) &&
-    "encryptedData" in (eventData.payload as Record<string, unknown>)
-      ? (eventData.payload as { encryptedData?: unknown }).encryptedData
-      : "",
-    typeof eventData.data === "object" &&
-    eventData.data &&
-    !Array.isArray(eventData.data as Record<string, unknown>) &&
-    "encryptedData" in (eventData.data as Record<string, unknown>)
-      ? (eventData.data as { encryptedData?: unknown }).encryptedData
-      : "",
+  return findEncryptedDataValue(eventData) || "";
+}
+
+function findEncryptedDataValue(data: unknown): string {
+  if (!data) {
+    return "";
+  }
+
+  if (typeof data === "string") {
+    return data.trim();
+  }
+
+  if (typeof data !== "object" || Array.isArray(data)) {
+    return "";
+  }
+
+  const record = data as Record<string, unknown>;
+
+  const keyPriority: Array<keyof Record<string, unknown>> = [
+    "encryptedData",
+    "encryptedUserData",
+    "payload",
+    "data",
+    "sessionData",
+    "result",
+    "token",
+    "session",
   ];
 
-  for (const candidate of candidates) {
-    if (typeof candidate === "string") {
-      return candidate;
+  for (const key of keyPriority) {
+    const value = record[key];
+
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  for (const key of keyPriority) {
+    const value = record[key];
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+
+    const nested = findEncryptedDataValue(value);
+    if (nested) {
+      return nested;
     }
   }
 
