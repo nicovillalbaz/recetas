@@ -1175,6 +1175,39 @@ legend {
   max-width: 310px;
 }
 
+.auth-shell {
+  background: var(--background);
+  display: grid;
+  min-height: 100dvh;
+  padding: 28px;
+  place-items: center;
+}
+
+.auth-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 18px 60px rgba(31, 29, 30, 0.08);
+  display: grid;
+  gap: 16px;
+  max-width: 520px;
+  padding: 28px;
+  width: 100%;
+}
+
+.auth-panel h1 {
+  font-size: 34px;
+  letter-spacing: 0;
+  line-height: 1;
+  margin: 0;
+}
+
+.auth-message {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
+}
+
 .verify-shell {
   background:
     linear-gradient(180deg, rgba(223, 236, 232, 0.85), rgba(245, 247, 246, 0.2) 280px),

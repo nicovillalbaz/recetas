@@ -128,6 +128,8 @@ type SignatureRubricState = {
 
 const SIGNATURE_SECURITY_STORAGE_KEY = "duran.signatureSecurity";
 const GHL_SESSION_STORAGE_KEY = "duran.ghlSession";
+const DURAN_GHL_LOCATION_ID =
+  process.env.NEXT_PUBLIC_GHL_LOCATION_ID || "oHE4xQTwNInUOTgcLcJJ";
 const AUTOFIRMA_OPERATION_TIMEOUT_MS = 180000;
 const MAX_SIGNATURE_RUBRIC_WIDTH = 900;
 const MAX_SIGNATURE_RUBRIC_HEIGHT = 260;
@@ -245,6 +247,9 @@ export default function PrescriptionApp() {
     params.get("recordToken") ||
     params.get("token") ||
     "";
+  const isExternalSignFlow = Boolean(
+    params.get("externalSign") === "1" && signRecordId && signRecordToken,
+  );
   const [selectedContactId, setSelectedContactId] = useState(contactId);
   const [doctor, setDoctor] = useState<DoctorProfile>(defaultDoctorProfile);
   const [patient, setPatient] = useState<PatientProfile>({
@@ -353,7 +358,11 @@ export default function PrescriptionApp() {
     serverErrors.length > 0 ? "No se pudo completar la operacion" : "Faltan datos obligatorios";
   const isSigning = isAutoSigning || isBrowserSigning;
   const canGenerate =
-    validationErrors.length === 0 && !isSaving && !isSigning && Boolean(sessionToken);
+    authStatus === "authenticated" &&
+    validationErrors.length === 0 &&
+    !isSaving &&
+    !isSigning &&
+    Boolean(sessionToken);
   const previewPrescription = getPrescriptionText(prescription);
 
   useEffect(() => {
@@ -384,6 +393,37 @@ export default function PrescriptionApp() {
     let isActive = true;
 
     async function authenticate() {
+      const clearSession = () => {
+        window.sessionStorage.removeItem(GHL_SESSION_STORAGE_KEY);
+        setSessionToken("");
+        setSessionUser(null);
+      };
+
+      if (isExternalSignFlow) {
+        clearSession();
+        setAuthStatus("unauthenticated");
+        setAuthError("");
+        return;
+      }
+
+      if (locationId && locationId !== DURAN_GHL_LOCATION_ID) {
+        clearSession();
+        setAuthStatus("unauthenticated");
+        setAuthError(
+          "Acceso prohibido. Esta app solo esta autorizada para la subcuenta de Duran.",
+        );
+        return;
+      }
+
+      if (!isEmbeddedInFrame()) {
+        clearSession();
+        setAuthStatus("unauthenticated");
+        setAuthError(
+          "Acceso prohibido. Abre la app desde la subcuenta de Duran en GHL.",
+        );
+        return;
+      }
+
       const storedToken =
         window.sessionStorage.getItem(GHL_SESSION_STORAGE_KEY) || "";
 
@@ -393,17 +433,6 @@ export default function PrescriptionApp() {
         if (isActive && restored) {
           return;
         }
-      }
-
-      if (signRecordId && signRecordToken) {
-        setAuthStatus("unauthenticated");
-        return;
-      }
-
-      if (!isEmbeddedInFrame()) {
-        setAuthStatus("unauthenticated");
-        setAuthError("Abre la app desde la subcuenta para iniciar sesion.");
-        return;
       }
 
       try {
@@ -437,9 +466,7 @@ export default function PrescriptionApp() {
           return;
         }
 
-        window.sessionStorage.removeItem(GHL_SESSION_STORAGE_KEY);
-        setSessionToken("");
-        setSessionUser(null);
+        clearSession();
         setAuthStatus("error");
         setAuthError(
           error instanceof Error
@@ -478,7 +505,7 @@ export default function PrescriptionApp() {
     return () => {
       isActive = false;
     };
-  }, [signRecordId, signRecordToken]);
+  }, [isExternalSignFlow, locationId]);
 
   useEffect(() => {
     if (!sessionToken) {
@@ -516,7 +543,7 @@ export default function PrescriptionApp() {
   }, [sessionToken, signRecordId, signRecordToken]);
 
   useEffect(() => {
-    if (!signRecordId || !signRecordToken) {
+    if (!isExternalSignFlow) {
       return;
     }
 
@@ -571,7 +598,7 @@ export default function PrescriptionApp() {
     return () => {
       controller.abort();
     };
-  }, [signRecordId, signRecordToken]);
+  }, [isExternalSignFlow, signRecordId, signRecordToken]);
 
   useEffect(() => {
     if (!contactId || !sessionToken) {
@@ -767,7 +794,7 @@ export default function PrescriptionApp() {
 
     const externalAutoFirmaWindow =
       signatureMethod === "autofirma" && isEmbeddedInFrame()
-        ? window.open("about:blank", "_blank")
+        ? openPendingAutoFirmaWindow()
         : null;
 
     if (signatureMethod === "autofirma" && isEmbeddedInFrame()) {
@@ -777,10 +804,6 @@ export default function PrescriptionApp() {
         ]);
         return;
       }
-
-      externalAutoFirmaWindow.document.title = "Preparando AutoFirma";
-      externalAutoFirmaWindow.document.body.innerHTML =
-        "<p style=\"font-family:Arial,sans-serif;margin:24px\">Preparando AutoFirma...</p>";
     }
 
     setIsSaving(true);
@@ -836,7 +859,11 @@ export default function PrescriptionApp() {
             createdPrescription,
             temporaryToken,
           );
-          externalAutoFirmaWindow.opener = null;
+          try {
+            externalAutoFirmaWindow.opener = null;
+          } catch {
+            // The signing window is already isolated enough for this flow.
+          }
         }
 
         setAutoSignStatus(
@@ -1008,25 +1035,32 @@ export default function PrescriptionApp() {
         return;
       }
 
+      const externalAutoFirmaWindow = openPendingAutoFirmaWindow();
+
+      if (!externalAutoFirmaWindow) {
+        setServerErrors([
+          "Chrome bloqueo la ventana externa de AutoFirma. Permite ventanas emergentes para esta web y vuelve a intentarlo.",
+        ]);
+        return;
+      }
+
       setAutoSignStatus("Preparando ventana externa de AutoFirma...");
 
       const temporaryToken = await createTemporarySignToken(target);
 
       if (!temporaryToken) {
+        externalAutoFirmaWindow.close();
         return;
       }
 
-      const opened = window.open(
-        buildStandaloneAutoFirmaUrl(target, temporaryToken),
-        "_blank",
-        "noopener,noreferrer",
+      externalAutoFirmaWindow.location.href = buildStandaloneAutoFirmaUrl(
+        target,
+        temporaryToken,
       );
-
-      if (!opened) {
-        setServerErrors([
-          "Chrome bloqueo la ventana externa de AutoFirma. Permite ventanas emergentes para esta web y vuelve a intentarlo.",
-        ]);
-        return;
+      try {
+        externalAutoFirmaWindow.opener = null;
+      } catch {
+        // The signing window is already isolated enough for this flow.
       }
 
       setAutoSignStatus(
@@ -1129,6 +1163,69 @@ export default function PrescriptionApp() {
     }
   }
 
+  if (isExternalSignFlow) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <p className="eyebrow">Firma externa</p>
+          <h1>AutoFirma</h1>
+
+          {isLoadingPrescription && (
+            <p className="auth-message">Validando token temporal...</p>
+          )}
+
+          {!isLoadingPrescription && !created && (
+            <p className="auth-message">
+              Acceso prohibido o token de firma caducado.
+            </p>
+          )}
+
+          {created && (
+            <>
+              <p className="auth-message">
+                {created.record.signedPdf
+                  ? "PDF firmado y guardado."
+                  : "Token temporal validado."}
+              </p>
+              {autoSignStatus && (
+                <p className="signature-inline-status">{autoSignStatus}</p>
+              )}
+              <button
+                className="primary-button"
+                disabled={
+                  isLoadingPrescription ||
+                  isSigning ||
+                  Boolean(created.record.signedPdf)
+                }
+                type="button"
+                onClick={() => {
+                  void signPrescriptionWithAutoFirma(created);
+                }}
+              >
+                {isSigning ? "Firmando..." : "Firmar con AutoFirma"}
+              </button>
+            </>
+          )}
+
+          {serverErrors.length > 0 && (
+            <div className="validation-panel">
+              <strong>No se pudo completar la firma</strong>
+              <ul>
+                {serverErrors.map((error) => (
+                  <li key={error}>{error}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      </main>
+    );
+  }
+
+  if (authStatus !== "authenticated") {
+    return <AuthGate message={authError} status={authStatus} />;
+  }
+
   return (
     <main className="app-shell">
       <section className="hero-panel">
@@ -1216,11 +1313,6 @@ export default function PrescriptionApp() {
         </div>
         <div className="history-list">
           {historyError && <p className="contact-search-error">{historyError}</p>}
-          {!sessionToken && authStatus !== "loading" && (
-            <p className="contact-search-status">
-              El historial se activa al abrir la app desde la subcuenta.
-            </p>
-          )}
           {isLoadingHistory && (
             <p className="contact-search-status">Cargando historial...</p>
           )}
@@ -2071,16 +2163,33 @@ function createSignedPdfFileName(payload: PrescriptionPayload) {
   return createPdfFileName(payload).replace(/\.pdf$/i, "-firmado.pdf");
 }
 
+function openPendingAutoFirmaWindow() {
+  const opened = window.open("about:blank", "_blank");
+
+  if (!opened) {
+    return null;
+  }
+
+  try {
+    opened.document.title = "Preparando AutoFirma";
+    opened.document.body.innerHTML =
+      "<p style=\"font-family:Arial,sans-serif;margin:24px\">Preparando AutoFirma...</p>";
+  } catch {
+    // Some browsers restrict access immediately; the window can still be reused.
+  }
+
+  return opened;
+}
+
 function buildStandaloneAutoFirmaUrl(
   target: CreatedPrescription,
   signToken = target.record.token,
 ) {
-  const url = new URL(window.location.href);
+  const url = new URL(window.location.pathname || "/", window.location.origin);
+
+  url.searchParams.set("externalSign", "1");
   url.searchParams.set("signRecordId", target.record.id);
   url.searchParams.set("signToken", signToken);
-  url.searchParams.delete("contactId");
-  url.searchParams.delete("contact_id");
-  url.searchParams.delete("token");
 
   return url.toString();
 }
@@ -2667,6 +2776,31 @@ function BrandHeader() {
       />
       <p className="brand-registration">Número de Colegiada&nbsp;&nbsp;06/4993</p>
     </>
+  );
+}
+
+function AuthGate({
+  message,
+  status,
+}: {
+  message: string;
+  status: AuthStatus;
+}) {
+  const isLoading = status === "loading";
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel">
+        <p className="eyebrow">Durán Ginecología</p>
+        <h1>{isLoading ? "Validando acceso" : "Acceso prohibido"}</h1>
+        <p className="auth-message">
+          {isLoading
+            ? "Comprobando sesion de GHL..."
+            : message ||
+              "Esta app solo puede abrirse desde la subcuenta autorizada de Duran en GHL."}
+        </p>
+      </section>
+    </main>
   );
 }
 

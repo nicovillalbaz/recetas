@@ -11,6 +11,7 @@
 
 ```env
 NEXT_PUBLIC_APP_URL=https://tu-url-publica
+NEXT_PUBLIC_GHL_LOCATION_ID=oHE4xQTwNInUOTgcLcJJ
 GHL_PRIVATE_TOKEN=token_privado_de_highlevel
 GHL_LOCATION_ID=oHE4xQTwNInUOTgcLcJJ
 GHL_API_VERSION=2021-07-28
@@ -67,8 +68,15 @@ Context de GHL:
 3. Solo acepta sesiones donde `activeLocation` coincide con `GHL_LOCATION_ID`.
 4. Devuelve una sesion corta firmada que queda en `sessionStorage`.
 
-Fuera de GHL solo funciona la ventana externa temporal de AutoFirma, abierta con
-un token de firma de pocos minutos.
+El frontend tambien comprueba que el `locationId` recibido por URL, si existe,
+sea `NEXT_PUBLIC_GHL_LOCATION_ID`. Si la app se abre desde un navegador directo,
+un iframe ajeno o una subcuenta diferente, muestra `Acceso prohibido` sin
+renderizar formulario, historial ni previsualizacion.
+
+Fuera de GHL solo funciona la ventana externa temporal de AutoFirma, abierta
+desde una accion de usuario dentro del iframe y con un token de firma de pocos
+minutos. Esa ventana no reutiliza la sesion GHL ni muestra la previsualizacion
+completa; solo sirve para lanzar AutoFirma y subir el PDF firmado.
 
 ## Boton flotante en GHL
 
