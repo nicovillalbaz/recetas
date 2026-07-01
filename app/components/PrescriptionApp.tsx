@@ -461,7 +461,7 @@ export default function PrescriptionApp() {
             },
             body: JSON.stringify(payload),
           });
-          const data = (await response.json()) as AuthResponse;
+          const data = await readAuthResponse(response);
 
           return { response, data };
         };
@@ -480,7 +480,8 @@ export default function PrescriptionApp() {
 
         if (!response.ok || !data.token || !data.user) {
           throw new Error(
-            data.errors?.[0] || "No se pudo iniciar sesion.",
+            data.errors?.[0] ||
+              `Error de autenticacion (${response.status}).`,
           );
         }
 
@@ -513,7 +514,7 @@ export default function PrescriptionApp() {
         const response = await fetch("/api/auth/me", {
           headers: getSessionHeaders(token),
         });
-        const data = (await response.json()) as AuthResponse;
+        const data = await readAuthResponse(response);
 
         if (!response.ok || !data.user) {
           window.sessionStorage.removeItem(GHL_SESSION_STORAGE_KEY);
@@ -529,6 +530,23 @@ export default function PrescriptionApp() {
       } catch {
         window.sessionStorage.removeItem(GHL_SESSION_STORAGE_KEY);
         return false;
+      }
+    }
+
+    async function readAuthResponse(response: Response) {
+      const responseText = await response.text();
+      if (!responseText) {
+        return {};
+      }
+
+      try {
+        return JSON.parse(responseText) as AuthResponse;
+      } catch {
+        return {
+          errors: [
+            `Respuesta no valida del servidor (${response.status}).`,
+          ],
+        };
       }
     }
 
