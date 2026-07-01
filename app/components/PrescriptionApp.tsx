@@ -129,7 +129,7 @@ type SignatureRubricState = {
 const SIGNATURE_SECURITY_STORAGE_KEY = "duran.signatureSecurity";
 const GHL_SESSION_STORAGE_KEY = "duran.ghlSession";
 const DURAN_GHL_LOCATION_ID =
-  process.env.NEXT_PUBLIC_GHL_LOCATION_ID || "oHE4xQTwNInUOTgcLcJJ";
+  (process.env.NEXT_PUBLIC_GHL_LOCATION_ID || "oHE4xQTwNInUOTgcLcJJ").trim();
 const AUTOFIRMA_OPERATION_TIMEOUT_MS = 180000;
 const MAX_SIGNATURE_RUBRIC_WIDTH = 900;
 const MAX_SIGNATURE_RUBRIC_HEIGHT = 260;
@@ -236,6 +236,7 @@ const emptySignatureRubric: SignatureRubricState = {
 export default function PrescriptionApp() {
   const params = useSearchParams();
   const locationId = resolveLocationIdFromContext(params);
+  const effectiveLocationId = locationId || DURAN_GHL_LOCATION_ID;
   const contactId = params.get("contactId") || params.get("contact_id") || "";
   const signRecordId =
     params.get("signRecordId") ||
@@ -337,7 +338,7 @@ export default function PrescriptionApp() {
         id: buildPrescriptionId(),
         createdAt: new Date().toISOString(),
         expiresAt: getDefaultExpiryDate(),
-        locationId: sessionUser?.locationId || locationId,
+        locationId: sessionUser?.locationId || effectiveLocationId,
         contactId: selectedContactId,
         doctor,
         patient,
@@ -346,6 +347,7 @@ export default function PrescriptionApp() {
     [
       doctor,
       locationId,
+      effectiveLocationId,
       patient,
       prescription,
       selectedContactId,
@@ -406,7 +408,7 @@ export default function PrescriptionApp() {
         return;
       }
 
-      if (locationId && locationId !== DURAN_GHL_LOCATION_ID) {
+      if (effectiveLocationId !== DURAN_GHL_LOCATION_ID) {
         clearSession();
         setAuthStatus("unauthenticated");
         setAuthError(
@@ -442,10 +444,10 @@ export default function PrescriptionApp() {
           params.get("iframePin") ||
           "";
         const authPayload: {
-          locationId?: string;
+          locationId: string;
           pin?: string;
           encryptedData?: string;
-        } = { locationId };
+        } = { locationId: effectiveLocationId };
 
         if (fallbackPin) {
           authPayload.pin = fallbackPin;
@@ -469,7 +471,7 @@ export default function PrescriptionApp() {
         if (!response.ok) {
           try {
             const encryptedData = await requestGhlEncryptedUserData();
-            const encryptedPayload = { encryptedData, locationId };
+            const encryptedPayload = { encryptedData, locationId: effectiveLocationId };
             ({ response, data } = await requestAuth(encryptedPayload));
           } catch {
             // keep the previous response from the location-only attempt.
@@ -535,7 +537,7 @@ export default function PrescriptionApp() {
     return () => {
       isActive = false;
     };
-  }, [isExternalSignFlow, locationId]);
+  }, [isExternalSignFlow, effectiveLocationId]);
 
   useEffect(() => {
     if (!sessionToken) {

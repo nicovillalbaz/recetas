@@ -13,12 +13,17 @@ export async function POST(request: NextRequest) {
     pin?: string;
   };
 
-  const locationId = body.locationId?.trim() || "";
-  const expectedLocationId = process.env.GHL_LOCATION_ID?.trim() || "";
+  const bodyLocationId = body.locationId?.trim() || "";
+  const expectedLocationId =
+    process.env.GHL_LOCATION_ID?.trim() ||
+    process.env.NEXT_PUBLIC_GHL_LOCATION_ID?.trim() ||
+    "oHE4xQTwNInUOTgcLcJJ";
+  const locationId = bodyLocationId || expectedLocationId;
   const pin = body.pin?.trim() || "";
   const configuredPin = process.env.GHL_IFRAME_PIN?.trim() || "";
   const allowLocationOnlyFallback =
-    process.env.GHL_ALLOW_LOCATION_ONLY_AUTH?.trim() === "1";
+    process.env.GHL_ALLOW_LOCATION_ONLY_AUTH?.trim() === "1" ||
+    !configuredPin;
   const encryptedData = body.encryptedData?.trim() || "";
 
   if (!encryptedData) {
