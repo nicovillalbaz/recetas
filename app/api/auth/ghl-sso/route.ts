@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSessionToken } from "@/lib/authSession";
+import type { GhlSessionUser } from "@/lib/authSession";
 import { decryptGhlUserContext, GhlSsoError } from "@/lib/ghlSso";
 import { saveGhlUserSession } from "@/lib/prescriptionStore";
 
@@ -8,10 +9,59 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => ({}))) as {
     encryptedData?: string;
+    locationId?: string;
+    pin?: string;
   };
+
+  const locationId = body.locationId?.trim() || "";
+  const expectedLocationId = process.env.GHL_LOCATION_ID?.trim() || "";
+  const pin = body.pin?.trim() || "";
+  const configuredPin = process.env.GHL_IFRAME_PIN?.trim() || "";
+  const allowLocationOnlyFallback =
+    process.env.GHL_ALLOW_LOCATION_ONLY_AUTH?.trim() === "1";
   const encryptedData = body.encryptedData?.trim() || "";
 
   if (!encryptedData) {
+    if (
+      locationId &&
+      expectedLocationId &&
+      locationId === expectedLocationId &&
+      (allowLocationOnlyFallback ||
+        !configuredPin ||
+        configuredPin === pin)
+    ) {
+      const fallbackUser: GhlSessionUser = {
+        userId: `iframe-${locationId}`,
+        companyId: "",
+        locationId,
+        role: "iframe",
+        userName: "Usuario del iframe",
+        email: "",
+        isAgencyOwner: false,
+      };
+
+      const sessionToken = createSessionToken(fallbackUser);
+      const session = {
+        ...fallbackUser,
+        expiresAt: sessionToken.expiresAt,
+      };
+
+      await saveGhlUserSession(session);
+
+      return NextResponse.json({
+        token: sessionToken.token,
+        expiresAt: sessionToken.expiresAt,
+        user: fallbackUser,
+      });
+    }
+
+    if (configuredPin && !allowLocationOnlyFallback) {
+      return NextResponse.json(
+        { errors: ["No se recibio la sesion cifrada o el pin de acceso no coincide."] },
+        { status: 422 },
+      );
+    }
+
     return NextResponse.json(
       { errors: ["No se recibio la sesion cifrada."] },
       { status: 422 },

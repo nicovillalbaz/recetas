@@ -13,6 +13,7 @@
 
   const LOCATION_ID = "oHE4xQTwNInUOTgcLcJJ";
   const CUSTOM_MENU_LINK_ID = "eb28c946-6b6b-46db-982c-51a50d3f399e";
+  const IFRAME_PIN = "";
   const CONTACT_STORAGE_KEY = "duranRecetasContactId";
   const BUTTON_ID = "duran-recetas-contact-button";
   const BUTTON_STYLE_ID = "duran-recetas-contact-button-style";
@@ -75,6 +76,9 @@
 
     url.searchParams.set("contactId", contactId);
     url.searchParams.set("locationId", LOCATION_ID);
+    if (IFRAME_PIN) {
+      url.searchParams.set("pin", IFRAME_PIN);
+    }
 
     return url.toString();
   }
@@ -180,6 +184,9 @@
 
         frameUrl.searchParams.set("locationId", LOCATION_ID);
         frameUrl.searchParams.set("contactId", contactId);
+        if (IFRAME_PIN) {
+          frameUrl.searchParams.set("pin", IFRAME_PIN);
+        }
         frame.src = frameUrl.toString();
       } catch {
         // Ignore frames without a valid URL.

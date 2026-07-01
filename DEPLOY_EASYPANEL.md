@@ -20,6 +20,9 @@ GHL_APP_SHARED_SECRET=shared_secret_de_marketplace_app
 APP_SESSION_SECRET=secreto_largo_para_firmar_sesiones
 APP_ENCRYPTION_KEY=clave_base64_de_32_bytes
 APP_DATA_DIR=/app/.data
+GHL_ALLOW_LOCATION_ONLY_AUTH=1
+# Opcional: define este pin si quieres exigirlo en el fallback del iframe.
+GHL_IFRAME_PIN=pin-fijo-para-iframe
 
 # Opcional si se usa exposeSessionDetails(APP_ID) fuera de custom pages.
 NEXT_PUBLIC_GHL_APP_ID=id_de_la_marketplace_app
@@ -67,6 +70,9 @@ Context de GHL:
 2. El backend lo descifra con `GHL_APP_SHARED_SECRET`.
 3. Solo acepta sesiones donde `activeLocation` coincide con `GHL_LOCATION_ID`.
 4. Devuelve una sesion corta firmada que queda en `sessionStorage`.
+5. Si el payload cifrado no llega, puede usar un fallback de emergencia:
+   - con `GHL_ALLOW_LOCATION_ONLY_AUTH=1` permite autenticarse sólo por `locationId` y estado de iframe;
+   - con `GHL_IFRAME_PIN` (opcional) sólo acepta fallback si la URL lleva ese pin en `pin`, `iframePin` o `accessPin`.
 
 El frontend tambien comprueba que el `locationId` recibido por URL, si existe,
 sea `NEXT_PUBLIC_GHL_LOCATION_ID`. Si la app se abre desde un navegador directo,

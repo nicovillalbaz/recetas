@@ -436,15 +436,45 @@ export default function PrescriptionApp() {
       }
 
       try {
-        const encryptedData = await requestGhlEncryptedUserData();
-        const response = await fetch("/api/auth/ghl-sso", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ encryptedData }),
-        });
-        const data = (await response.json()) as AuthResponse;
+        const fallbackPin =
+          params.get("pin") ||
+          params.get("accessPin") ||
+          params.get("iframePin") ||
+          "";
+        const authPayload: {
+          locationId?: string;
+          pin?: string;
+          encryptedData?: string;
+        } = { locationId };
+
+        if (fallbackPin) {
+          authPayload.pin = fallbackPin;
+        }
+
+        const requestAuth = async (payload: typeof authPayload) => {
+          const response = await fetch("/api/auth/ghl-sso", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          });
+          const data = (await response.json()) as AuthResponse;
+
+          return { response, data };
+        };
+
+        let { response, data } = await requestAuth(authPayload);
+
+        if (!response.ok) {
+          try {
+            const encryptedData = await requestGhlEncryptedUserData();
+            const encryptedPayload = { encryptedData, locationId };
+            ({ response, data } = await requestAuth(encryptedPayload));
+          } catch {
+            // keep the previous response from the location-only attempt.
+          }
+        }
 
         if (!response.ok || !data.token || !data.user) {
           throw new Error(
