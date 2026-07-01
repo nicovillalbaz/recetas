@@ -419,7 +419,7 @@ export default function PrescriptionApp() {
         clearSession();
         setAuthStatus("unauthenticated");
         setAuthError(
-          "Acceso prohibido. Abre la app desde la subcuenta de Duran en GHL.",
+          "Acceso prohibido. Abre la app desde la subcuenta de Duran.",
         );
         return;
       }
@@ -2210,43 +2210,110 @@ function getSessionHeaders(sessionToken: string): Record<string, string> {
     : {};
 }
 
-function requestGhlEncryptedUserData() {
+async function requestGhlEncryptedUserData() {
+  const appId = process.env.NEXT_PUBLIC_GHL_APP_ID || undefined;
+
   if (typeof window.exposeSessionDetails === "function") {
-    return window.exposeSessionDetails(
-      process.env.NEXT_PUBLIC_GHL_APP_ID || undefined,
-    );
+    try {
+      const exposedData = await window.exposeSessionDetails(appId);
+      if (typeof exposedData === "string" && exposedData.trim()) {
+        return exposedData.trim();
+      }
+
+      throw new Error("La sesion recibida esta vacia.");
+    } catch {
+      // Keep compatibility with environments where exposeSessionDetails is unavailable
+      // or not functioning as expected. Fallback to postMessage handshake.
+    }
+  }
+
+  return requestSessionDetailsByPostMessage(appId);
+}
+
+function requestSessionDetailsByPostMessage(appId?: string) {
+  const requestPayload = { message: "REQUEST_USER_DATA", appId };
+  const requestTargets = [window.parent];
+
+  if (window.top !== window.parent) {
+    requestTargets.push(window.top);
   }
 
   return new Promise<string>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       window.removeEventListener("message", handleMessage);
       reject(new Error("No se pudo leer la sesion de usuario."));
-    }, 8000);
+    }, 12000);
 
     function handleMessage(event: MessageEvent) {
-      const data = event.data as {
-        message?: string;
-        payload?: unknown;
-      };
-
-      if (data?.message !== "REQUEST_USER_DATA_RESPONSE") {
+      const payload = extractRequestUserDataPayload(event.data);
+      if (!payload) {
         return;
       }
 
       window.clearTimeout(timeout);
       window.removeEventListener("message", handleMessage);
 
-      if (typeof data.payload !== "string") {
+      if (typeof payload !== "string" || !payload.trim()) {
         reject(new Error("La sesion recibida esta vacia."));
         return;
       }
 
-      resolve(data.payload);
+      resolve(payload.trim());
+    }
+
+    function sendRequestMessage(target: Window) {
+      try {
+        target.postMessage(requestPayload, "*");
+      } catch {
+        // Ignore failures for invalid targets/cross-origin edge cases.
+      }
     }
 
     window.addEventListener("message", handleMessage);
-    window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
+    requestTargets.forEach(sendRequestMessage);
   });
+}
+
+function extractRequestUserDataPayload(data: unknown) {
+  if (!data || typeof data !== "object") {
+    return "";
+  }
+
+  const eventData = data as {
+    message?: string;
+    type?: string;
+    event?: string;
+    payload?: unknown;
+    data?: unknown;
+  };
+
+  const isResponse =
+    eventData.message === "REQUEST_USER_DATA_RESPONSE" ||
+    eventData.type === "REQUEST_USER_DATA_RESPONSE" ||
+    eventData.event === "REQUEST_USER_DATA_RESPONSE";
+
+  if (!isResponse) {
+    return "";
+  }
+
+  const candidates = [
+    eventData.payload,
+    eventData.data,
+    typeof eventData.data === "object" &&
+    eventData.data !== null &&
+    !Array.isArray(eventData.data) &&
+    "payload" in (eventData.data as Record<string, unknown>)
+      ? (eventData.data as { payload?: unknown }).payload
+      : "",
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string") {
+      return candidate;
+    }
+  }
+
+  return "";
 }
 
 function historyStatusLabel(status: PrescriptionHistoryItem["status"]) {
