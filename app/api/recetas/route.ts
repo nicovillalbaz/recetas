@@ -1,21 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  type GhlSession,
-  requireLocationSession,
-} from "@/lib/authSession";
-import { createGhlContactNote } from "@/lib/ghl";
+import { requireLocationSession } from "@/lib/authSession";
 import {
   buildPrescriptionPdfUrl,
   buildVerificationUrl,
   createPrescriptionRecord,
   normalizePrescriptionPayload,
-  type PrescriptionRecord,
   validatePrescriptionPayload,
 } from "@/lib/prescription";
-import {
-  recordPrescriptionEvent,
-  savePrescriptionRecord,
-} from "@/lib/prescriptionStore";
+import { savePrescriptionRecord } from "@/lib/prescriptionStore";
 
 export const runtime = "nodejs";
 
@@ -58,24 +50,6 @@ export async function POST(request: NextRequest) {
     const verificationUrl = buildVerificationUrl(record, origin);
     const pdfUrl = buildPrescriptionPdfUrl(record, origin);
 
-    if (record.contactId) {
-      await createPrescriptionContactNote(
-        record,
-        verificationUrl,
-        pdfUrl,
-        session,
-      ).catch(async (error) => {
-        await recordPrescriptionEvent(
-          record.id,
-          "ghl_note_failed",
-          session,
-          {
-            message: error instanceof Error ? error.message : String(error),
-          },
-        );
-      });
-    }
-
     return NextResponse.json({
       record,
       verificationUrl,
@@ -91,23 +65,4 @@ export async function POST(request: NextRequest) {
 
 function getPublicOrigin(request: NextRequest) {
   return process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
-}
-
-async function createPrescriptionContactNote(
-  record: PrescriptionRecord,
-  verificationUrl: string,
-  pdfUrl: string,
-  session: GhlSession,
-) {
-  const note = [
-    `Receta medica creada: ${record.id}`,
-    `Nueva receta: ${record.payload.patient.name}`,
-    `Verificacion: ${verificationUrl}`,
-    `PDF: ${pdfUrl}`,
-  ].join("\n");
-
-  await createGhlContactNote(record.contactId, note);
-  await recordPrescriptionEvent(record.id, "ghl_note_created", session, {
-    contactId: record.contactId,
-  });
 }
