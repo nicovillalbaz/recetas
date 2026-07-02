@@ -452,7 +452,7 @@ export async function saveUserRubric(
       [
         session.locationId,
         session.userId,
-        sanitizeFileLabel(fileName || "rubrica.jpg"),
+        sanitizeFileLabel(fileName || "firma.jpg"),
         encrypted.cipherTextB64,
         encrypted.ivB64,
         encrypted.tagB64,
@@ -462,7 +462,7 @@ export async function saveUserRubric(
   });
 
   return {
-    fileName: sanitizeFileLabel(fileName || "rubrica.jpg"),
+    fileName: sanitizeFileLabel(fileName || "firma.jpg"),
     imageB64,
     updatedAt: now,
   };

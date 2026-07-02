@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireLocationSession } from "@/lib/authSession";
 import {
   GhlConfigurationError,
-  createGhlContactNote,
   getGhlContact,
   sendGhlMessageToContact,
 } from "@/lib/ghl";
@@ -11,7 +10,6 @@ import {
   canOpenPrescriptionPdf,
   getPrescriptionRecord,
   markPrescriptionSent,
-  recordPrescriptionEvent,
 } from "@/lib/prescriptionStore";
 
 export const runtime = "nodejs";
@@ -90,15 +88,6 @@ export async function POST(
 
     await sendGhlMessageToContact(record.contactId, patientMessage);
     const updatedRecord = await markPrescriptionSent(record.id, session);
-
-    await createGhlContactNote(
-      record.contactId,
-      `Receta enviada al paciente por mensaje: ${pdfUrl}`,
-    ).catch(async (error) => {
-      await recordPrescriptionEvent(record.id, "ghl_note_failed", session, {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    });
 
     return NextResponse.json({ sent: true, record: updatedRecord || record });
   } catch (error) {

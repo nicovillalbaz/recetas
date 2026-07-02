@@ -138,7 +138,7 @@ Dentro se guardan:
 - `/app/.data/recetas.db`: SQLite con recetas, usuarios, eventos de auditoria
   y metadatos.
 - `/app/.data/files/signed-pdfs`: PDFs firmados.
-- rubricas visuales PNG/JPG convertidas a JPEG y cifradas por usuario.
+- firmas visuales PNG/JPG convertidas a JPEG y cifradas por usuario.
 
 No se guardan certificados `.p12/.pfx`, claves privadas ni contrasenas. AutoFirma
 usa el certificado local del equipo; la alternativa `.p12/.pfx` solo procesa el

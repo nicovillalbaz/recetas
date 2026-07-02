@@ -584,7 +584,7 @@ export default function PrescriptionApp() {
         const data = (await response.json()) as RubricResponse;
 
         if (!response.ok) {
-          throw new Error(data.errors?.[0] || "No se pudo cargar la rubrica.");
+          throw new Error(data.errors?.[0] || "No se pudo cargar la firma.");
         }
 
         setSignatureRubric(data.rubric || emptySignatureRubric);
@@ -1907,7 +1907,7 @@ export default function PrescriptionApp() {
             {signatureSecurity.method === "autofirma" && (
               <div className="signature-rubric-panel">
                 <label className="field">
-                  <span>Rubrica visual opcional</span>
+                  <span>Firma visual opcional</span>
                   <input
                     accept="image/png,image/jpeg,.png,.jpg,.jpeg"
                     disabled={isPreparingRubric}
@@ -1921,7 +1921,7 @@ export default function PrescriptionApp() {
                 {signatureRubric.imageB64 ? (
                   <div className="signature-rubric-preview">
                     <Image
-                      alt="Rubrica visual seleccionada"
+                      alt="Firma visual seleccionada"
                       height={86}
                       src={`data:image/jpeg;base64,${signatureRubric.imageB64}`}
                       unoptimized
@@ -1937,7 +1937,7 @@ export default function PrescriptionApp() {
                           void updateSignatureRubric();
                         }}
                       >
-                        Quitar rubrica
+                        Quitar firma
                       </button>
                     </div>
                   </div>
@@ -2168,7 +2168,7 @@ export default function PrescriptionApp() {
     setServerErrors([]);
 
     if (!sessionToken) {
-      setServerErrors(["Inicia sesion para guardar la rubrica."]);
+      setServerErrors(["Inicia sesion para guardar la firma."]);
       return;
     }
 
@@ -2185,7 +2185,7 @@ export default function PrescriptionApp() {
           const data = (await response.json().catch(() => ({}))) as {
             errors?: string[];
           };
-          throw new Error(data.errors?.[0] || "No se pudo quitar la rubrica.");
+          throw new Error(data.errors?.[0] || "No se pudo quitar la firma.");
         }
 
         setSignatureRubric(emptySignatureRubric);
@@ -2193,7 +2193,7 @@ export default function PrescriptionApp() {
         setServerErrors([
           error instanceof Error
             ? error.message
-            : "No se pudo quitar la rubrica.",
+            : "No se pudo quitar la firma.",
         ]);
       } finally {
         setIsPreparingRubric(false);
@@ -2214,7 +2214,7 @@ export default function PrescriptionApp() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          fileName: file.name || "rubrica.jpg",
+          fileName: file.name || "firma.jpg",
           imageB64,
         }),
       });
@@ -2222,7 +2222,7 @@ export default function PrescriptionApp() {
 
       if (!response.ok || !data.rubric) {
         throw new Error(
-          data.errors?.[0] || "No se pudo guardar la rubrica visual.",
+          data.errors?.[0] || "No se pudo guardar la firma visual.",
         );
       }
 
@@ -2232,7 +2232,7 @@ export default function PrescriptionApp() {
       setServerErrors([
         error instanceof Error
           ? error.message
-          : "No se pudo preparar la rubrica visual.",
+          : "No se pudo preparar la firma visual.",
       ]);
     } finally {
       setIsPreparingRubric(false);
@@ -2305,7 +2305,7 @@ async function fetchSignatureRubricForSignToken(
   const data = (await response.json()) as RubricResponse;
 
   if (!response.ok) {
-    throw new Error(data.errors?.[0] || "No se pudo cargar la rubrica.");
+    throw new Error(data.errors?.[0] || "No se pudo cargar la firma.");
   }
 
   return data.rubric || null;
@@ -3138,7 +3138,7 @@ async function convertSignatureRubricFileToJpegBase64(file: File) {
     file.type.startsWith("image/") || /\.(png|jpe?g)$/i.test(file.name);
 
   if (!isAcceptedImage) {
-    throw new Error("Sube una rubrica visual en formato PNG o JPG.");
+    throw new Error("Sube una firma visual en formato PNG o JPG.");
   }
 
   const dataUrl = await fileToDataUrl(file);
@@ -3147,7 +3147,7 @@ async function convertSignatureRubricFileToJpegBase64(file: File) {
   const sourceHeight = image.naturalHeight || image.height;
 
   if (!sourceWidth || !sourceHeight) {
-    throw new Error("No se pudo leer el tamano de la rubrica visual.");
+    throw new Error("No se pudo leer el tamano de la firma visual.");
   }
 
   const scale = Math.min(
@@ -3161,7 +3161,7 @@ async function convertSignatureRubricFileToJpegBase64(file: File) {
   const context = canvas.getContext("2d");
 
   if (!context) {
-    throw new Error("No se pudo preparar la rubrica visual.");
+    throw new Error("No se pudo preparar la firma visual.");
   }
 
   canvas.width = width;
@@ -3173,7 +3173,7 @@ async function convertSignatureRubricFileToJpegBase64(file: File) {
   const [, imageB64 = ""] = canvas.toDataURL("image/jpeg", 0.88).split(",");
 
   if (!imageB64) {
-    throw new Error("No se pudo convertir la rubrica visual a JPEG.");
+    throw new Error("No se pudo convertir la firma visual a JPEG.");
   }
 
   return imageB64;
@@ -3193,7 +3193,7 @@ function loadImageElement(dataUrl: string) {
     const image = new window.Image();
     image.onload = () => resolve(image);
     image.onerror = () =>
-      reject(new Error("No se pudo cargar la rubrica visual."));
+      reject(new Error("No se pudo cargar la firma visual."));
     image.src = dataUrl;
   });
 }
