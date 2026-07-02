@@ -3,10 +3,13 @@ import {
   getSessionFromRequest,
   requireLocationSession,
 } from "@/lib/authSession";
+import { createGhlContactNote } from "@/lib/ghl";
+import { buildPrescriptionPdfUrl } from "@/lib/prescription";
 import {
   canOpenPrescriptionPdf,
   getPrescriptionRecord,
   getPrescriptionRecordByReadableToken,
+  recordPrescriptionEvent,
   saveSignedPrescriptionPdf,
 } from "@/lib/prescriptionStore";
 
@@ -118,5 +121,34 @@ export async function POST(
     );
   }
 
+  if (record.contactId) {
+    const pdfUrl = buildPrescriptionPdfUrl(record, getPublicOrigin(request));
+
+    await createGhlContactNote(
+      record.contactId,
+      [
+        `Receta medica firmada: ${record.id}`,
+        `Nueva receta: ${record.payload.patient.name}`,
+        `PDF firmado: ${pdfUrl}`,
+      ].join("\n"),
+    )
+      .then(async () => {
+        await recordPrescriptionEvent(record.id, "ghl_note_created", locationSession, {
+          contactId: record.contactId,
+          signed: true,
+        });
+      })
+      .catch(async (error) => {
+        await recordPrescriptionEvent(record.id, "ghl_note_failed", locationSession, {
+          message: error instanceof Error ? error.message : String(error),
+          signed: true,
+        });
+      });
+  }
+
   return NextResponse.json({ record });
+}
+
+function getPublicOrigin(request: NextRequest) {
+  return process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
 }

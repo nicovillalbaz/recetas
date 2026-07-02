@@ -861,7 +861,9 @@ export default function PrescriptionApp() {
   }, [authStatus, contactSearch, sessionToken]);
 
   useEffect(() => {
-    if (!sessionToken) {
+    const cleanHistorySearch = historySearch.trim();
+
+    if (!sessionToken || !isHistoryOpen || cleanHistorySearch.length < 2) {
       setHistoryItems([]);
       setHistoryError("");
       setIsLoadingHistory(false);
@@ -870,7 +872,7 @@ export default function PrescriptionApp() {
 
     const controller = new AbortController();
     const params = new URLSearchParams({
-      q: historySearch,
+      q: cleanHistorySearch,
       status: historyStatus,
       signed: historySigned,
       sent: historySent,
@@ -918,6 +920,7 @@ export default function PrescriptionApp() {
     historySent,
     historySigned,
     historyStatus,
+    isHistoryOpen,
     sessionToken,
   ]);
 
@@ -1428,11 +1431,11 @@ export default function PrescriptionApp() {
         <summary className="history-header">
           <div>
             <p className="eyebrow">Historial</p>
-            <h2>Recetas guardadas</h2>
+            {isHistoryOpen && <h2>Buscar recetas guardadas</h2>}
           </div>
-          <span className="history-toggle-label">
-            {isHistoryOpen ? "Ocultar" : "Mostrar"}
-          </span>
+          {isHistoryOpen && (
+            <span className="history-toggle-label">Ocultar</span>
+          )}
         </summary>
         <div className="history-body">
           <div className="history-actions">
@@ -1450,7 +1453,7 @@ export default function PrescriptionApp() {
               <span>Buscar</span>
               <input
                 disabled={!sessionToken}
-                placeholder="Nueva receta, DNI/NIE o codigo"
+                placeholder="Escribe un nombre para buscar"
                 type="search"
                 value={historySearch}
                 onChange={(event) => setHistorySearch(event.target.value)}
@@ -1504,36 +1507,45 @@ export default function PrescriptionApp() {
             {historyError && (
               <p className="contact-search-error">{historyError}</p>
             )}
+            {historySearch.trim().length < 2 && (
+              <p className="contact-search-status">
+                Escribe al menos 2 caracteres para ver recetas.
+              </p>
+            )}
             {isLoadingHistory && (
               <p className="contact-search-status">Cargando historial...</p>
             )}
             {!isLoadingHistory &&
               sessionToken &&
+              historySearch.trim().length >= 2 &&
               historyItems.length === 0 &&
               !historyError && (
-                <p className="contact-search-status">Sin recetas guardadas.</p>
+                <p className="contact-search-status">
+                  Sin recetas asociadas a la busqueda.
+                </p>
               )}
-            {historyItems.map((item) => (
-              <button
-                className="history-item"
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  void loadHistoryPrescription(item);
-                }}
-              >
-                <span>
-                  <strong>{item.patientName || "Sin nombre"}</strong>
-                  <small>{item.id}</small>
-                </span>
-                <span className="history-tags">
-                  <small>{formatDate(item.createdAt)}</small>
-                  <small>{historyStatusLabel(item.status)}</small>
-                  <small>{item.signed ? "Firmada" : "Sin firma"}</small>
-                  <small>{item.sent ? "Enviada" : "No enviada"}</small>
-                </span>
-              </button>
-            ))}
+            {historySearch.trim().length >= 2 &&
+              historyItems.map((item) => (
+                <button
+                  className="history-item"
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    void loadHistoryPrescription(item);
+                  }}
+                >
+                  <span>
+                    <strong>{item.patientName || "Sin nombre"}</strong>
+                    <small>{item.id}</small>
+                  </span>
+                  <span className="history-tags">
+                    <small>{formatDate(item.createdAt)}</small>
+                    <small>{historyStatusLabel(item.status)}</small>
+                    <small>{item.signed ? "Firmada" : "Sin firma"}</small>
+                    <small>{item.sent ? "Enviada" : "No enviada"}</small>
+                  </span>
+                </button>
+              ))}
           </div>
         </div>
       </details>
@@ -2206,7 +2218,7 @@ export default function PrescriptionApp() {
           imageB64,
         }),
       });
-      const data = (await response.json()) as RubricResponse;
+      const data = await readJsonResponse<RubricResponse>(response);
 
       if (!response.ok || !data.rubric) {
         throw new Error(

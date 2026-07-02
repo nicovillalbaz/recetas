@@ -17,9 +17,13 @@ export async function GET(request: NextRequest) {
     return unauthorized();
   }
 
-  const rubric = await getUserRubric(session);
+  try {
+    const rubric = await getUserRubric(session);
 
-  return NextResponse.json({ rubric });
+    return NextResponse.json({ rubric });
+  } catch (error) {
+    return rubricError(error, "No se pudo cargar la rubrica visual.");
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -49,13 +53,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const rubric = await saveUserRubric(
-    session,
-    body.fileName || "rubrica.jpg",
-    imageB64,
-  );
+  try {
+    const rubric = await saveUserRubric(
+      session,
+      body.fileName || "rubrica.jpg",
+      imageB64,
+    );
 
-  return NextResponse.json({ rubric });
+    return NextResponse.json({ rubric });
+  } catch (error) {
+    return rubricError(error, "No se pudo guardar la rubrica visual.");
+  }
 }
 
 export async function DELETE(request: NextRequest) {
@@ -65,14 +73,27 @@ export async function DELETE(request: NextRequest) {
     return unauthorized();
   }
 
-  await deleteUserRubric(session);
+  try {
+    await deleteUserRubric(session);
 
-  return NextResponse.json({ deleted: true });
+    return NextResponse.json({ deleted: true });
+  } catch (error) {
+    return rubricError(error, "No se pudo quitar la rubrica visual.");
+  }
 }
 
 function unauthorized() {
   return NextResponse.json(
     { errors: ["Inicia sesion para gestionar la rubrica."] },
     { status: 401 },
+  );
+}
+
+function rubricError(error: unknown, fallback: string) {
+  const detail = error instanceof Error ? error.message : "";
+
+  return NextResponse.json(
+    { errors: [detail || fallback] },
+    { status: 500 },
   );
 }

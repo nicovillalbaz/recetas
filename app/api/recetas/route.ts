@@ -59,18 +59,21 @@ export async function POST(request: NextRequest) {
     const pdfUrl = buildPrescriptionPdfUrl(record, origin);
 
     if (record.contactId) {
-      await createPrescriptionContactNote(record, verificationUrl, session).catch(
-        async (error) => {
-          await recordPrescriptionEvent(
-            record.id,
-            "ghl_note_failed",
-            session,
-            {
-              message: error instanceof Error ? error.message : String(error),
-            },
-          );
-        },
-      );
+      await createPrescriptionContactNote(
+        record,
+        verificationUrl,
+        pdfUrl,
+        session,
+      ).catch(async (error) => {
+        await recordPrescriptionEvent(
+          record.id,
+          "ghl_note_failed",
+          session,
+          {
+            message: error instanceof Error ? error.message : String(error),
+          },
+        );
+      });
     }
 
     return NextResponse.json({
@@ -93,12 +96,14 @@ function getPublicOrigin(request: NextRequest) {
 async function createPrescriptionContactNote(
   record: PrescriptionRecord,
   verificationUrl: string,
+  pdfUrl: string,
   session: GhlSession,
 ) {
   const note = [
     `Receta medica creada: ${record.id}`,
     `Nueva receta: ${record.payload.patient.name}`,
     `Verificacion: ${verificationUrl}`,
+    `PDF: ${pdfUrl}`,
   ].join("\n");
 
   await createGhlContactNote(record.contactId, note);
