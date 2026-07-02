@@ -70,7 +70,7 @@ El token privado debe tener como minimo:
 
 - lectura de contactos;
 - lectura de custom fields si se usan DNI/NIF personalizados;
-- envio de mensajes/SMS;
+- envio de mensajes;
 - notas de contacto si quieres que la receta cree notas best-effort en la plataforma.
 
 Si cambias variables en EasyPanel, reinicia o redepliega la app.

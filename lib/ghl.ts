@@ -61,12 +61,12 @@ export async function getGhlContact(contactId: string) {
   return contact || null;
 }
 
-export async function sendGhlSmsToContact(contactId: string, message: string) {
+export async function sendGhlMessageToContact(contactId: string, message: string) {
   const cleanContactId = contactId.trim();
   const cleanMessage = message.trim();
 
   if (!cleanContactId || !cleanMessage) {
-    throw new Error("Faltan el contacto o el mensaje para enviar el SMS.");
+    throw new Error("Faltan el contacto o el mensaje para enviar.");
   }
 
   const config = getGhlConfig();
@@ -79,10 +79,14 @@ export async function sendGhlSmsToContact(contactId: string, message: string) {
   };
 
   try {
-    return await fetchGhlJson("/conversations/messages", {
+    const response = await fetchGhlJson("/conversations/messages", {
       method: "POST",
       body: JSON.stringify(payload),
     }, config);
+
+    assertGhlMessageCreated(response);
+
+    return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
 
@@ -90,7 +94,7 @@ export async function sendGhlSmsToContact(contactId: string, message: string) {
       throw error;
     }
 
-    return fetchGhlJson("/conversations/messages", {
+    const response = await fetchGhlJson("/conversations/messages", {
       method: "POST",
       body: JSON.stringify({
         type: payload.type,
@@ -98,6 +102,10 @@ export async function sendGhlSmsToContact(contactId: string, message: string) {
         message: payload.message,
       }),
     }, config);
+
+    assertGhlMessageCreated(response);
+
+    return response;
   }
 }
 
@@ -423,6 +431,43 @@ function splitConfiguredKeys(value: string) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function assertGhlMessageCreated(response: unknown) {
+  if (hasGhlMessageIdentifier(response)) {
+    return;
+  }
+
+  throw new Error(
+    "La plataforma no confirmo la creacion del mensaje. Revisa conversaciones antes de reintentar.",
+  );
+}
+
+function hasGhlMessageIdentifier(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  for (const key of [
+    "id",
+    "messageId",
+    "message_id",
+    "conversationId",
+    "conversation_id",
+    "emailMessageId",
+  ]) {
+    if (getString(value[key])) {
+      return true;
+    }
+  }
+
+  for (const key of ["message", "data", "conversation"]) {
+    if (hasGhlMessageIdentifier(value[key])) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function getGhlConfig(): GhlConfig {

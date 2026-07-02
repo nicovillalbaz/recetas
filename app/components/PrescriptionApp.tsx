@@ -1109,7 +1109,7 @@ export default function PrescriptionApp() {
     }
 
     setPatientMessageTarget(target);
-    setPatientMessageDraft(buildPatientSmsDraft(target));
+    setPatientMessageDraft(buildPatientMessageDraft(target));
     setServerErrors([]);
     setIsPatientMessageDialogOpen(true);
   }
@@ -2344,7 +2344,7 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   } as T;
 }
 
-function buildPatientSmsDraft(target: CreatedPrescription) {
+function buildPatientMessageDraft(target: CreatedPrescription) {
   const patientName = target.record.payload.patient.name.trim();
   const firstName = patientName.split(/\s+/)[0] || "";
   const greeting = firstName ? `Hola ${firstName},` : "Hola,";

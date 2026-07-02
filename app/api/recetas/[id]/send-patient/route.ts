@@ -3,7 +3,8 @@ import { requireLocationSession } from "@/lib/authSession";
 import {
   GhlConfigurationError,
   createGhlContactNote,
-  sendGhlSmsToContact,
+  getGhlContact,
+  sendGhlMessageToContact,
 } from "@/lib/ghl";
 import { buildPrescriptionPdfUrl } from "@/lib/prescription";
 import {
@@ -68,18 +69,31 @@ export async function POST(
   }
 
   const pdfUrl = buildPrescriptionPdfUrl(record, getPublicOrigin(request));
-  const smsMessage = normalizePatientSmsMessage(
-    body.message || buildPatientSms(record, pdfUrl),
+  const patientMessage = normalizePatientMessage(
+    body.message || buildPatientMessage(record, pdfUrl),
     pdfUrl,
   );
 
   try {
-    await sendGhlSmsToContact(record.contactId, smsMessage);
+    const contact = await getGhlContact(record.contactId);
+
+    if (!contact?.phone) {
+      return NextResponse.json(
+        {
+          errors: [
+            "El contacto no tiene telefono disponible para recibir el mensaje.",
+          ],
+        },
+        { status: 422 },
+      );
+    }
+
+    await sendGhlMessageToContact(record.contactId, patientMessage);
     const updatedRecord = await markPrescriptionSent(record.id, session);
 
     await createGhlContactNote(
       record.contactId,
-      `Receta enviada al paciente por SMS: ${pdfUrl}`,
+      `Receta enviada al paciente por mensaje: ${pdfUrl}`,
     ).catch(async (error) => {
       await recordPrescriptionEvent(record.id, "ghl_note_failed", session, {
         message: error instanceof Error ? error.message : String(error),
@@ -98,8 +112,8 @@ export async function POST(
       {
         errors: [
           detail
-            ? `No se pudo enviar el SMS. ${detail}`
-            : "No se pudo enviar el SMS.",
+            ? `No se pudo enviar el mensaje. ${detail}`
+            : "No se pudo enviar el mensaje.",
         ],
       },
       { status: 502 },
@@ -107,7 +121,7 @@ export async function POST(
   }
 }
 
-function buildPatientSms(
+function buildPatientMessage(
   record: NonNullable<Awaited<ReturnType<typeof getPrescriptionRecord>>>,
   pdfUrl: string,
 ) {
@@ -117,7 +131,7 @@ function buildPatientSms(
   return `${greeting} aqui tienes tu receta: ${pdfUrl}`;
 }
 
-function normalizePatientSmsMessage(message: string, pdfUrl: string) {
+function normalizePatientMessage(message: string, pdfUrl: string) {
   const cleanMessage = message.replace(/\s+/g, " ").trim();
 
   if (!cleanMessage) {
