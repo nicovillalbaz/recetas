@@ -46,7 +46,7 @@ export function decryptGhlUserContext(encryptedData: string): GhlSessionUser {
   const expectedLocationId = process.env.GHL_LOCATION_ID?.trim() || "";
 
   if (!expectedLocationId || locationId !== expectedLocationId) {
-    throw new GhlSsoError("La sesion no pertenece a la subcuenta autorizada.");
+    throw new GhlSsoError("La sesion no pertenece a la cuenta autorizada.");
   }
 
   if (!payload.userId) {

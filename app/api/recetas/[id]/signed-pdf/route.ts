@@ -45,14 +45,14 @@ export async function POST(
 
   if (session && !locationSession) {
     return NextResponse.json(
-      { errors: ["Sesion no valida para esta subcuenta."] },
+      { errors: ["Sesion no valida para esta cuenta."] },
       { status: 403 },
     );
   }
 
   if (locationSession && currentRecord.locationId !== locationSession.locationId) {
     return NextResponse.json(
-      { errors: ["La receta no pertenece a la subcuenta autorizada."] },
+      { errors: ["La receta no pertenece a la cuenta autorizada."] },
       { status: 403 },
     );
   }

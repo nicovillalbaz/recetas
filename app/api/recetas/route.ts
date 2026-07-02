@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
 
     if (payload.locationId && payload.locationId !== session.locationId) {
       return NextResponse.json(
-        { errors: ["La receta no pertenece a la subcuenta autorizada."] },
+        { errors: ["La receta no pertenece a la cuenta autorizada."] },
         { status: 403 },
       );
     }
@@ -97,7 +97,7 @@ async function createPrescriptionContactNote(
 ) {
   const note = [
     `Receta medica creada: ${record.id}`,
-    `Paciente: ${record.payload.patient.name}`,
+    `Nueva receta: ${record.payload.patient.name}`,
     `Verificacion: ${verificationUrl}`,
   ].join("\n");
 

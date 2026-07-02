@@ -69,7 +69,7 @@ export default async function VerifyPrescriptionPage({
 
         <section className="verify-summary">
           <div>
-            <span>Paciente</span>
+            <span>Nueva receta</span>
             <strong>{record.payload.patient.name}</strong>
             {record.payload.patient.documentId && (
               <small>{maskDocumentId(record.payload.patient.documentId)}</small>

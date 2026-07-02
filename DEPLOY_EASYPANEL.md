@@ -27,18 +27,18 @@ GHL_IFRAME_PIN=pin-fijo-para-iframe
 # Opcional si se usa exposeSessionDetails(APP_ID) fuera de custom pages.
 NEXT_PUBLIC_GHL_APP_ID=id_de_la_marketplace_app
 
-# Opcional si estos datos estan en campos personalizados de GHL
+# Opcional si estos datos estan en campos personalizados
 GHL_PATIENT_DOCUMENT_FIELD_ID=lF4RWq25UPi4mdqnbrx9,ojop67QjbwNC7Kw1uyLu
 GHL_PATIENT_DNI_FIELD_ID=lF4RWq25UPi4mdqnbrx9
 GHL_PATIENT_NIF_FIELD_ID=ojop67QjbwNC7Kw1uyLu
 GHL_PATIENT_BIRTH_DATE_FIELD_ID=
 ```
 
-La fecha de cumpleanos/nacimiento llega desde el campo estandar de GHL
+La fecha de cumpleanos/nacimiento llega desde el campo estandar de la plataforma
 `dateOfBirth`, por eso `GHL_PATIENT_BIRTH_DATE_FIELD_ID` puede quedarse vacio
 mientras no exista un custom field especifico de nacimiento.
 
-`GHL_APP_SHARED_SECRET` sale de la app de Marketplace en GHL. La app lo usa solo
+`GHL_APP_SHARED_SECRET` sale de la app de Marketplace. La app lo usa solo
 en backend para descifrar el User Context/SSO del iframe. `APP_SESSION_SECRET`
 firma sesiones cortas guardadas en `sessionStorage`. `APP_ENCRYPTION_KEY` debe
 ser una clave de 32 bytes en base64, por ejemplo generada con:
@@ -64,26 +64,26 @@ $bytes = New-Object byte[] 64
 
 En EasyPanel, agregalo en **App → Variables de Entorno** y vuelve a levantar/redeployar la app.
 
-## Permisos GHL
+## Permisos
 
 El token privado debe tener como minimo:
 
 - lectura de contactos;
 - lectura de custom fields si se usan DNI/NIF personalizados;
 - envio de mensajes/SMS;
-- notas de contacto si quieres que la receta cree notas best-effort en GHL.
+- notas de contacto si quieres que la receta cree notas best-effort en la plataforma.
 
 Si cambias variables en EasyPanel, reinicia o redepliega la app.
 
 Los IDs de custom fields tambien pueden ir separados por coma si hay mas de un
 campo posible, por ejemplo `GHL_PATIENT_DOCUMENT_FIELD_ID=id_dni,id_nif`.
 
-## SSO dentro de GHL
+## SSO integrado
 
 La app intenta iniciar sesion automaticamente dentro del iframe usando User
-Context de GHL:
+Context de la plataforma:
 
-1. El frontend pide el payload cifrado a GHL con `REQUEST_USER_DATA`.
+1. El frontend pide el payload cifrado con `REQUEST_USER_DATA`.
 2. El backend lo descifra con `GHL_APP_SHARED_SECRET`.
 3. Solo acepta sesiones donde `activeLocation` coincide con `GHL_LOCATION_ID`.
 4. Devuelve una sesion corta firmada que queda en `sessionStorage`.
@@ -93,18 +93,18 @@ Context de GHL:
 
 El frontend tambien comprueba que el `locationId` recibido por URL, si existe,
 sea `NEXT_PUBLIC_GHL_LOCATION_ID`. Si la app se abre desde un navegador directo,
-un iframe ajeno o una subcuenta diferente, muestra `Acceso prohibido` sin
+un iframe ajeno o una cuenta diferente, muestra `Acceso prohibido` sin
 renderizar formulario, historial ni previsualizacion.
 
-Fuera de GHL solo funciona la ventana externa temporal de AutoFirma, abierta
+Fuera del entorno integrado solo funciona la ventana externa temporal de AutoFirma, abierta
 desde una accion de usuario dentro del iframe y con un token de firma de pocos
-minutos. Esa ventana no reutiliza la sesion GHL ni muestra la previsualizacion
+minutos. Esa ventana no reutiliza la sesion integrada ni muestra la previsualizacion
 completa; solo sirve para lanzar AutoFirma y subir el PDF firmado.
 
-## Boton flotante en GHL
+## Boton flotante
 
-Para tener un boton `Hacer receta` dentro de la ficha/contacto de GHL solo en la
-subcuenta de Duran, instala el userscript `ghl-duran-recetas.user.js` en el
+Para tener un boton `Hacer receta` dentro de la ficha/contacto solo en la
+cuenta de Duran, instala el userscript `ghl-duran-recetas.user.js` en el
 navegador de la doctora con Tampermonkey.
 
 El script solo se ejecuta en:
@@ -135,10 +135,10 @@ montado en:
 
 Dentro se guardan:
 
-- `/app/.data/recetas.db`: SQLite con recetas, usuarios GHL, eventos de auditoria
+- `/app/.data/recetas.db`: SQLite con recetas, usuarios, eventos de auditoria
   y metadatos.
 - `/app/.data/files/signed-pdfs`: PDFs firmados.
-- rubricas visuales PNG/JPG convertidas a JPEG y cifradas por usuario GHL.
+- rubricas visuales PNG/JPG convertidas a JPEG y cifradas por usuario.
 
 No se guardan certificados `.p12/.pfx`, claves privadas ni contrasenas. AutoFirma
 usa el certificado local del equipo; la alternativa `.p12/.pfx` solo procesa el

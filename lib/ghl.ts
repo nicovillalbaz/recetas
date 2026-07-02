@@ -23,7 +23,7 @@ export type GhlContactSummary = {
 
 export class GhlConfigurationError extends Error {
   constructor() {
-    super("Configura el token privado y la subcuenta en EasyPanel.");
+    super("Configura el token privado y la cuenta en EasyPanel.");
     this.name = "GhlConfigurationError";
   }
 }
@@ -44,7 +44,7 @@ export async function searchGhlContacts(query: string) {
       return contacts;
     }
   } catch {
-    // Some GHL accounts respond better to the list endpoint; try that below.
+    // Some accounts respond better to the list endpoint; try that below.
   }
 
   return searchContactsWithGet(config, cleanQuery);

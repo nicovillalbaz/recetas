@@ -138,7 +138,7 @@ function drawLetterhead(page: PdfCanvas) {
 function drawPatientBlock(page: PdfCanvas, patient: PatientProfile) {
   const x = CONTENT_X + 24;
   let y = 560;
-  const lines: Array<[string, string]> = [["Paciente:", patient.name]];
+  const lines: Array<[string, string]> = [["Nueva receta:", patient.name]];
 
   if (patient.documentId) {
     lines.push(["DNI/NIE:", patient.documentId]);

@@ -84,8 +84,6 @@ a {
 .history-panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  display: grid;
-  gap: 14px;
   margin: 0 auto 24px;
   max-width: 1220px;
   padding: 18px;
@@ -93,15 +91,42 @@ a {
 
 .history-header {
   align-items: end;
+  cursor: pointer;
   display: flex;
   gap: 16px;
   justify-content: space-between;
+  list-style: none;
+}
+
+.history-header::-webkit-details-marker {
+  display: none;
 }
 
 .history-header h2 {
   font-size: 20px;
   letter-spacing: 0;
   margin: 4px 0 0;
+}
+
+.history-toggle-label {
+  align-self: center;
+  background: var(--brand-soft);
+  border-radius: 999px;
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 7px 12px;
+}
+
+.history-body {
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
+}
+
+.history-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .history-filters {

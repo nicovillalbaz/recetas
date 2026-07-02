@@ -331,6 +331,7 @@ export default function PrescriptionApp() {
   const [historyRefreshNonce, setHistoryRefreshNonce] = useState(0);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   const draftPayload = useMemo<PrescriptionPayload>(
     () =>
@@ -412,7 +413,7 @@ export default function PrescriptionApp() {
         clearSession();
         setAuthStatus("unauthenticated");
         setAuthError(
-          "Acceso prohibido. Esta app solo esta autorizada para la subcuenta de Duran.",
+          "Acceso prohibido. Esta app solo esta autorizada para la cuenta de Duran.",
         );
         return;
       }
@@ -421,7 +422,7 @@ export default function PrescriptionApp() {
         clearSession();
         setAuthStatus("unauthenticated");
         setAuthError(
-          "Acceso prohibido. Abre la app desde la subcuenta de Duran.",
+          "Acceso prohibido. Abre la app desde la cuenta de Duran.",
         );
         return;
       }
@@ -1151,10 +1152,23 @@ export default function PrescriptionApp() {
             },
       );
       setAutoSignStatus("PDF firmado guardado.");
+
+      if (isExternalSignFlow) {
+        window.setTimeout(() => {
+          window.close();
+          window.setTimeout(() => {
+            setAutoSignStatus(
+              "PDF firmado guardado. Puedes cerrar esta pestana.",
+            );
+          }, 600);
+        }, 900);
+      }
     } catch (error) {
       setServerErrors([getAutoFirmaErrorMessage(error)]);
     } finally {
-      window.setTimeout(() => setAutoSignStatus(""), 1800);
+      if (!isExternalSignFlow) {
+        window.setTimeout(() => setAutoSignStatus(""), 1800);
+      }
       setIsAutoSigning(false);
     }
   }
@@ -1281,125 +1295,134 @@ export default function PrescriptionApp() {
       <section className="hero-panel">
         <div>
           <p className="eyebrow">Durán Ginecología</p>
-          <p className="session-line">
-            {authStatus === "authenticated"
-              ? `Sesion activa: ${sessionUser?.userName || sessionUser?.email || "usuario"}`
-              : authStatus === "loading"
-                ? "Conectando..."
-                : authError || "Sin sesion activa"}
-          </p>
         </div>
       </section>
 
-      <section className="history-panel" aria-label="Historial de recetas">
-        <div className="history-header">
+      <details
+        className="history-panel"
+        aria-label="Historial de recetas"
+        open={isHistoryOpen}
+        onToggle={(event) => {
+          setIsHistoryOpen(event.currentTarget.open);
+        }}
+      >
+        <summary className="history-header">
           <div>
             <p className="eyebrow">Historial</p>
             <h2>Recetas guardadas</h2>
           </div>
-          <button
-            className="secondary-button compact-action"
-            disabled={!sessionToken || isLoadingHistory}
-            type="button"
-            onClick={() => setHistoryRefreshNonce((current) => current + 1)}
-          >
-            Actualizar
-          </button>
-        </div>
-        <div className="history-filters">
-          <label className="field">
-            <span>Buscar</span>
-            <input
-              disabled={!sessionToken}
-              placeholder="Paciente, DNI/NIE o codigo"
-              type="search"
-              value={historySearch}
-              onChange={(event) => setHistorySearch(event.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>Estado</span>
-            <select
-              disabled={!sessionToken}
-              value={historyStatus}
-              onChange={(event) =>
-                setHistoryStatus(event.target.value as typeof historyStatus)
-              }
-            >
-              <option value="all">Todas</option>
-              <option value="active">Activas</option>
-              <option value="cancelled">Anuladas</option>
-              <option value="expired">Caducadas</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Firma</span>
-            <select
-              disabled={!sessionToken}
-              value={historySigned}
-              onChange={(event) =>
-                setHistorySigned(event.target.value as typeof historySigned)
-              }
-            >
-              <option value="all">Todas</option>
-              <option value="signed">Firmadas</option>
-              <option value="unsigned">Sin firma</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Envio</span>
-            <select
-              disabled={!sessionToken}
-              value={historySent}
-              onChange={(event) =>
-                setHistorySent(event.target.value as typeof historySent)
-              }
-            >
-              <option value="all">Todas</option>
-              <option value="sent">Enviadas</option>
-              <option value="unsent">No enviadas</option>
-            </select>
-          </label>
-        </div>
-        <div className="history-list">
-          {historyError && <p className="contact-search-error">{historyError}</p>}
-          {isLoadingHistory && (
-            <p className="contact-search-status">Cargando historial...</p>
-          )}
-          {!isLoadingHistory &&
-            sessionToken &&
-            historyItems.length === 0 &&
-            !historyError && (
-              <p className="contact-search-status">Sin recetas guardadas.</p>
-            )}
-          {historyItems.map((item) => (
+          <span className="history-toggle-label">
+            {isHistoryOpen ? "Ocultar" : "Mostrar"}
+          </span>
+        </summary>
+        <div className="history-body">
+          <div className="history-actions">
             <button
-              className="history-item"
-              key={item.id}
+              className="secondary-button compact-action"
+              disabled={!sessionToken || isLoadingHistory}
               type="button"
-              onClick={() => {
-                void loadHistoryPrescription(item);
-              }}
+              onClick={() => setHistoryRefreshNonce((current) => current + 1)}
             >
-              <span>
-                <strong>{item.patientName || "Paciente sin nombre"}</strong>
-                <small>{item.id}</small>
-              </span>
-              <span className="history-tags">
-                <small>{formatDate(item.createdAt)}</small>
-                <small>{historyStatusLabel(item.status)}</small>
-                <small>{item.signed ? "Firmada" : "Sin firma"}</small>
-                <small>{item.sent ? "Enviada" : "No enviada"}</small>
-              </span>
+              Actualizar
             </button>
-          ))}
+          </div>
+          <div className="history-filters">
+            <label className="field">
+              <span>Buscar</span>
+              <input
+                disabled={!sessionToken}
+                placeholder="Nueva receta, DNI/NIE o codigo"
+                type="search"
+                value={historySearch}
+                onChange={(event) => setHistorySearch(event.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>Estado</span>
+              <select
+                disabled={!sessionToken}
+                value={historyStatus}
+                onChange={(event) =>
+                  setHistoryStatus(event.target.value as typeof historyStatus)
+                }
+              >
+                <option value="all">Todas</option>
+                <option value="active">Activas</option>
+                <option value="cancelled">Anuladas</option>
+                <option value="expired">Caducadas</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Firma</span>
+              <select
+                disabled={!sessionToken}
+                value={historySigned}
+                onChange={(event) =>
+                  setHistorySigned(event.target.value as typeof historySigned)
+                }
+              >
+                <option value="all">Todas</option>
+                <option value="signed">Firmadas</option>
+                <option value="unsigned">Sin firma</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Envio</span>
+              <select
+                disabled={!sessionToken}
+                value={historySent}
+                onChange={(event) =>
+                  setHistorySent(event.target.value as typeof historySent)
+                }
+              >
+                <option value="all">Todas</option>
+                <option value="sent">Enviadas</option>
+                <option value="unsent">No enviadas</option>
+              </select>
+            </label>
+          </div>
+          <div className="history-list">
+            {historyError && (
+              <p className="contact-search-error">{historyError}</p>
+            )}
+            {isLoadingHistory && (
+              <p className="contact-search-status">Cargando historial...</p>
+            )}
+            {!isLoadingHistory &&
+              sessionToken &&
+              historyItems.length === 0 &&
+              !historyError && (
+                <p className="contact-search-status">Sin recetas guardadas.</p>
+              )}
+            {historyItems.map((item) => (
+              <button
+                className="history-item"
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  void loadHistoryPrescription(item);
+                }}
+              >
+                <span>
+                  <strong>{item.patientName || "Sin nombre"}</strong>
+                  <small>{item.id}</small>
+                </span>
+                <span className="history-tags">
+                  <small>{formatDate(item.createdAt)}</small>
+                  <small>{historyStatusLabel(item.status)}</small>
+                  <small>{item.signed ? "Firmada" : "Sin firma"}</small>
+                  <small>{item.sent ? "Enviada" : "No enviada"}</small>
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
-      </section>
+      </details>
 
       <form className="workspace" onSubmit={handleSubmit}>
         <section className="form-column" aria-label="Formulario de receta">
           <fieldset>
-            <legend>Paciente</legend>
+            <legend>Nueva receta</legend>
             <div className="contact-picker">
               <label className="field">
                 <span>Buscar paciente</span>
@@ -1601,7 +1624,7 @@ export default function PrescriptionApp() {
 
             <section className="preview-patient-data">
               <p>
-                <span>Paciente:</span>
+                <span>Nueva receta:</span>
                 {patient.name || "Nombre y apellidos"}
               </p>
               {patient.documentId && (
@@ -2989,9 +3012,9 @@ function AuthGate({
         <h1>{isLoading ? "Validando acceso" : "Acceso prohibido"}</h1>
         <p className="auth-message">
           {isLoading
-            ? "Comprobando sesion de GHL..."
+            ? "Comprobando sesion..."
             : message ||
-              "Esta app solo puede abrirse desde la subcuenta autorizada de Duran en GHL."}
+              "Esta app solo puede abrirse desde la cuenta autorizada de Duran."}
         </p>
       </section>
     </main>

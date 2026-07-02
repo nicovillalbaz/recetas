@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
           companyId: "",
           locationId,
           role: "iframe",
-          userName: "Usuario del iframe",
+          userName: "Usuario",
           email: "",
           isAgencyOwner: false,
         };

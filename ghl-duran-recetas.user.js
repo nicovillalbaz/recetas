@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Duran Ginecologia - Boton Recetas GHL
+// @name         Duran Ginecologia - Boton Recetas
 // @namespace    https://duranginecologia.com/
 // @version      1.0.0
-// @description  Inserta un boton de recetas solo en la subcuenta de Duran Ginecologia.
+// @description  Inserta un boton de recetas solo en la cuenta de Duran Ginecologia.
 // @match        https://crm.viraltia.com/v2/location/oHE4xQTwNInUOTgcLcJJ/*
 // @run-at       document-idle
 // @grant        none
