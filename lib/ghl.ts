@@ -71,14 +71,34 @@ export async function sendGhlSmsToContact(contactId: string, message: string) {
 
   const config = getGhlConfig();
 
-  return fetchGhlJson("/conversations/messages", {
-    method: "POST",
-    body: JSON.stringify({
-      type: "SMS",
-      contactId: cleanContactId,
-      message: cleanMessage,
-    }),
-  }, config);
+  const payload = {
+    type: "SMS",
+    contactId: cleanContactId,
+    locationId: config.locationId,
+    message: cleanMessage,
+  };
+
+  try {
+    return await fetchGhlJson("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }, config);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+
+    if (!/API (400|422)\b/.test(message)) {
+      throw error;
+    }
+
+    return fetchGhlJson("/conversations/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        type: payload.type,
+        contactId: payload.contactId,
+        message: payload.message,
+      }),
+    }, config);
+  }
 }
 
 export async function createGhlContactNote(contactId: string, body: string) {

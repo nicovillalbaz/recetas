@@ -67,7 +67,7 @@ export async function POST(
   const pdfUrl = buildPrescriptionPdfUrl(record, getPublicOrigin(request));
 
   try {
-    await sendGhlSmsToContact(record.contactId, buildPatientSms(pdfUrl));
+    await sendGhlSmsToContact(record.contactId, buildPatientSms(record, pdfUrl));
     const updatedRecord = await markPrescriptionSent(record.id, session);
 
     await createGhlContactNote(
@@ -100,8 +100,14 @@ export async function POST(
   }
 }
 
-function buildPatientSms(pdfUrl: string) {
-  return `Hola {{contact.first_name}}, aqui tienes tu receta: ${pdfUrl}`;
+function buildPatientSms(
+  record: NonNullable<Awaited<ReturnType<typeof getPrescriptionRecord>>>,
+  pdfUrl: string,
+) {
+  const firstName = record.payload.patient.name.trim().split(/\s+/)[0] || "";
+  const greeting = firstName ? `Hola ${firstName},` : "Hola,";
+
+  return `${greeting} aqui tienes tu receta: ${pdfUrl}`;
 }
 
 function getPublicOrigin(request: NextRequest) {

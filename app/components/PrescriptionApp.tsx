@@ -128,6 +128,8 @@ type SignatureRubricState = {
 
 const SIGNATURE_SECURITY_STORAGE_KEY = "duran.signatureSecurity";
 const GHL_SESSION_STORAGE_KEY = "duran.ghlSession";
+const PRESCRIPTION_EVENT_CHANNEL = "duran.prescriptionEvents";
+const PRESCRIPTION_EVENT_STORAGE_KEY = "duran.prescriptionEvent";
 const DURAN_GHL_LOCATION_ID =
   (process.env.NEXT_PUBLIC_GHL_LOCATION_ID || "oHE4xQTwNInUOTgcLcJJ").trim();
 const AUTOFIRMA_OPERATION_TIMEOUT_MS = 180000;
@@ -652,6 +654,103 @@ export default function PrescriptionApp() {
   }, [isExternalSignFlow, signRecordId, signRecordToken]);
 
   useEffect(() => {
+    if (isExternalSignFlow || !created) {
+      return;
+    }
+
+    let isCancelled = false;
+    let clearStatusTimeout = 0;
+
+    async function refreshSignedPrescription(recordId: string) {
+      if (!created || created.record.id !== recordId) {
+        return;
+      }
+
+      setAutoSignStatus("Actualizando PDF firmado...");
+
+      try {
+        const loaded = await fetchPrescriptionRecord(
+          created.record.id,
+          created.record.token,
+        );
+
+        if (isCancelled) {
+          return;
+        }
+
+        setCreated(loaded);
+        setHistoryRefreshNonce((current) => current + 1);
+        setAutoSignStatus(
+          loaded.record.signedPdf
+            ? "PDF firmado guardado."
+            : "Receta actualizada.",
+        );
+        window.clearTimeout(clearStatusTimeout);
+        clearStatusTimeout = window.setTimeout(() => {
+          setAutoSignStatus("");
+        }, 2200);
+      } catch {
+        if (!isCancelled) {
+          setAutoSignStatus("");
+        }
+      }
+    }
+
+    function handleSignedEvent(payload: unknown) {
+      const event = parsePrescriptionSignedEvent(payload);
+
+      if (!event) {
+        return;
+      }
+
+      void refreshSignedPrescription(event.recordId);
+    }
+
+    function handleWindowMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      handleSignedEvent(event.data);
+    }
+
+    function handleStorageEvent(event: StorageEvent) {
+      if (
+        event.key !== PRESCRIPTION_EVENT_STORAGE_KEY ||
+        !event.newValue
+      ) {
+        return;
+      }
+
+      try {
+        handleSignedEvent(JSON.parse(event.newValue));
+      } catch {
+        // Ignore unrelated storage writes.
+      }
+    }
+
+    let channel: BroadcastChannel | null = null;
+
+    if ("BroadcastChannel" in window) {
+      channel = new BroadcastChannel(PRESCRIPTION_EVENT_CHANNEL);
+      channel.onmessage = (event) => {
+        handleSignedEvent(event.data);
+      };
+    }
+
+    window.addEventListener("message", handleWindowMessage);
+    window.addEventListener("storage", handleStorageEvent);
+
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(clearStatusTimeout);
+      window.removeEventListener("message", handleWindowMessage);
+      window.removeEventListener("storage", handleStorageEvent);
+      channel?.close();
+    };
+  }, [created, isExternalSignFlow]);
+
+  useEffect(() => {
     if (!contactId || !sessionToken) {
       return;
     }
@@ -910,11 +1009,6 @@ export default function PrescriptionApp() {
             createdPrescription,
             temporaryToken,
           );
-          try {
-            externalAutoFirmaWindow.opener = null;
-          } catch {
-            // The signing window is already isolated enough for this flow.
-          }
         }
 
         setAutoSignStatus(
@@ -1007,6 +1101,12 @@ export default function PrescriptionApp() {
       return;
     }
 
+    if (target.record.sentAt) {
+      setPatientSendStatus("Esta receta ya fue enviada al paciente.");
+      window.setTimeout(() => setPatientSendStatus(""), 2400);
+      return;
+    }
+
     if (!sessionToken) {
       setServerErrors(["Inicia sesion para enviar recetas."]);
       return;
@@ -1046,8 +1146,14 @@ export default function PrescriptionApp() {
         );
       }
 
-      setPatientSendStatus("Enviado al paciente por SMS.");
+      setPatientSendStatus("Enviado al paciente.");
       setHistoryRefreshNonce((current) => current + 1);
+    } catch (error) {
+      setServerErrors([
+        error instanceof Error
+          ? `No se pudo enviar al paciente. ${error.message}`
+          : "No se pudo enviar al paciente.",
+      ]);
     } finally {
       setIsSendingPatientPdf(false);
       window.setTimeout(() => setPatientSendStatus(""), 2400);
@@ -1108,11 +1214,6 @@ export default function PrescriptionApp() {
         target,
         temporaryToken,
       );
-      try {
-        externalAutoFirmaWindow.opener = null;
-      } catch {
-        // The signing window is already isolated enough for this flow.
-      }
 
       setAutoSignStatus(
         "Se abrio una ventana externa para firmar con AutoFirma.",
@@ -1154,6 +1255,7 @@ export default function PrescriptionApp() {
       setAutoSignStatus("PDF firmado guardado.");
 
       if (isExternalSignFlow) {
+        notifyPrescriptionSigned(target.record.id);
         window.setTimeout(() => {
           window.close();
           window.setTimeout(() => {
@@ -1690,6 +1792,7 @@ export default function PrescriptionApp() {
                     className="primary-button"
                     disabled={
                       !created.record.signedPdf ||
+                      Boolean(created.record.sentAt) ||
                       created.record.status === "cancelled" ||
                       isSendingPatientPdf ||
                       isSigning
@@ -1697,7 +1800,11 @@ export default function PrescriptionApp() {
                     type="button"
                     onClick={() => sendSignedPdfToPatient(created)}
                   >
-                    {isSendingPatientPdf ? "Enviando..." : "Enviar a cliente"}
+                    {isSendingPatientPdf
+                      ? "Enviando..."
+                      : created.record.sentAt
+                        ? "Enviado al paciente"
+                        : "Enviar al paciente"}
                   </button>
                 </div>
                 {created.record.status !== "cancelled" && (
@@ -1751,30 +1858,6 @@ export default function PrescriptionApp() {
             <div>
               <p className="eyebrow">Seguridad de firma</p>
               <h2 id="signature-dialog-title">Firma digital del documento</h2>
-              <p className="signature-dialog-copy">
-                Elige si quieres usar AutoFirma o probar la firma experimental
-                con certificado .p12/.pfx dentro del navegador.
-              </p>
-            </div>
-
-            <div className="signature-status-card">
-              <span>Estado</span>
-              <strong>
-                {signatureSecurity.method
-                  ? "Metodo de firma preparado"
-                  : "Firma pendiente"}
-              </strong>
-              <small>
-                {signatureSecurity.method === "autofirma"
-                  ? signatureRubric.imageB64
-                    ? `AutoFirma usara el certificado instalado y la rubrica visual ${signatureRubric.fileName}.`
-                    : "AutoFirma usara el certificado instalado en el equipo cuando este disponible."
-                  : signatureSecurity.method === "browser-p12"
-                    ? browserCertificateFile
-                      ? browserCertificateFile.name
-                      : "Sube el archivo de certificado para firmar en el navegador."
-                  : "Selecciona como se firmara el PDF."}
-              </small>
             </div>
 
             <div className="signature-options">
@@ -2265,6 +2348,62 @@ function buildStandaloneAutoFirmaUrl(
   url.searchParams.set("signToken", signToken);
 
   return url.toString();
+}
+
+function notifyPrescriptionSigned(recordId: string) {
+  const payload = {
+    type: "prescription-signed",
+    recordId,
+    signedAt: new Date().toISOString(),
+  };
+
+  try {
+    window.opener?.postMessage(payload, window.location.origin);
+  } catch {
+    // The opener may be unavailable if the browser isolated the popup.
+  }
+
+  if ("BroadcastChannel" in window) {
+    try {
+      const channel = new BroadcastChannel(PRESCRIPTION_EVENT_CHANNEL);
+      channel.postMessage(payload);
+      channel.close();
+    } catch {
+      // BroadcastChannel is only a convenience fallback.
+    }
+  }
+
+  try {
+    window.localStorage.setItem(
+      PRESCRIPTION_EVENT_STORAGE_KEY,
+      JSON.stringify(payload),
+    );
+  } catch {
+    // Storage can be unavailable in embedded or private contexts.
+  }
+}
+
+function parsePrescriptionSignedEvent(payload: unknown) {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("type" in payload) ||
+    !("recordId" in payload)
+  ) {
+    return null;
+  }
+
+  const candidate = payload as { type?: unknown; recordId?: unknown };
+
+  if (
+    candidate.type !== "prescription-signed" ||
+    typeof candidate.recordId !== "string" ||
+    !candidate.recordId
+  ) {
+    return null;
+  }
+
+  return { recordId: candidate.recordId };
 }
 
 function isEmbeddedInFrame() {
