@@ -298,6 +298,11 @@ export default function PrescriptionApp() {
   const [serverErrors, setServerErrors] = useState<string[]>([]);
   const [isLoadingPrescription, setIsLoadingPrescription] = useState(false);
   const [isSignatureDialogOpen, setIsSignatureDialogOpen] = useState(false);
+  const [isPatientMessageDialogOpen, setIsPatientMessageDialogOpen] =
+    useState(false);
+  const [patientMessageDraft, setPatientMessageDraft] = useState("");
+  const [patientMessageTarget, setPatientMessageTarget] =
+    useState<CreatedPrescription | null>(null);
   const [signatureDialogMode, setSignatureDialogMode] =
     useState<SignatureDialogMode>("create");
   const [browserCertificateFile, setBrowserCertificateFile] =
@@ -666,7 +671,7 @@ export default function PrescriptionApp() {
         return;
       }
 
-      setAutoSignStatus("Actualizando PDF firmado...");
+      setAutoSignStatus("Actualizando...");
 
       try {
         const loaded = await fetchPrescriptionRecord(
@@ -680,11 +685,7 @@ export default function PrescriptionApp() {
 
         setCreated(loaded);
         setHistoryRefreshNonce((current) => current + 1);
-        setAutoSignStatus(
-          loaded.record.signedPdf
-            ? "PDF firmado guardado."
-            : "Receta actualizada.",
-        );
+        setAutoSignStatus(loaded.record.signedPdf ? "" : "Receta actualizada.");
         window.clearTimeout(clearStatusTimeout);
         clearStatusTimeout = window.setTimeout(() => {
           setAutoSignStatus("");
@@ -1095,7 +1096,7 @@ export default function PrescriptionApp() {
     return data.record;
   }
 
-  async function sendSignedPdfToPatient(target: CreatedPrescription) {
+  function openPatientMessageDialog(target: CreatedPrescription) {
     if (!target.record.signedPdf) {
       setServerErrors(["Firma primero el PDF antes de enviarlo al paciente."]);
       return;
@@ -1104,6 +1105,19 @@ export default function PrescriptionApp() {
     if (target.record.sentAt) {
       setPatientSendStatus("Esta receta ya fue enviada al paciente.");
       window.setTimeout(() => setPatientSendStatus(""), 2400);
+      return;
+    }
+
+    setPatientMessageTarget(target);
+    setPatientMessageDraft(buildPatientSmsDraft(target));
+    setServerErrors([]);
+    setIsPatientMessageDialogOpen(true);
+  }
+
+  async function sendSignedPdfToPatient() {
+    const target = patientMessageTarget;
+
+    if (!target) {
       return;
     }
 
@@ -1125,10 +1139,13 @@ export default function PrescriptionApp() {
             ...getSessionHeaders(sessionToken),
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ token: target.record.token }),
+          body: JSON.stringify({
+            token: target.record.token,
+            message: patientMessageDraft,
+          }),
         },
       );
-      const data = (await response.json()) as SendPatientPdfResponse;
+      const data = await readJsonResponse<SendPatientPdfResponse>(response);
 
       if (!response.ok || !data.sent) {
         setServerErrors(data.errors || ["No se pudo enviar al paciente."]);
@@ -1147,6 +1164,8 @@ export default function PrescriptionApp() {
       }
 
       setPatientSendStatus("Enviado al paciente.");
+      setIsPatientMessageDialogOpen(false);
+      setPatientMessageTarget(null);
       setHistoryRefreshNonce((current) => current + 1);
     } catch (error) {
       setServerErrors([
@@ -1252,16 +1271,14 @@ export default function PrescriptionApp() {
               record,
             },
       );
-      setAutoSignStatus("PDF firmado guardado.");
+      setAutoSignStatus(isExternalSignFlow ? "Cerrando..." : "");
 
       if (isExternalSignFlow) {
         notifyPrescriptionSigned(target.record.id);
         window.setTimeout(() => {
           window.close();
           window.setTimeout(() => {
-            setAutoSignStatus(
-              "PDF firmado guardado. Puedes cerrar esta pestana.",
-            );
+            setAutoSignStatus("Puedes cerrar esta pestana.");
           }, 600);
         }, 900);
       }
@@ -1320,7 +1337,7 @@ export default function PrescriptionApp() {
               record,
             },
       );
-      setAutoSignStatus("PDF firmado guardado.");
+      setAutoSignStatus("");
     } catch (error) {
       setServerErrors([getBrowserCertificateErrorMessage(error)]);
     } finally {
@@ -1350,7 +1367,7 @@ export default function PrescriptionApp() {
             <>
               <p className="auth-message">
                 {created.record.signedPdf
-                  ? "PDF firmado y guardado."
+                  ? "Firma completada."
                   : "Token temporal validado."}
               </p>
               {autoSignStatus && (
@@ -1798,7 +1815,7 @@ export default function PrescriptionApp() {
                       isSigning
                     }
                     type="button"
-                    onClick={() => sendSignedPdfToPatient(created)}
+                    onClick={() => openPatientMessageDialog(created)}
                   >
                     {isSendingPatientPdf
                       ? "Enviando..."
@@ -1807,25 +1824,8 @@ export default function PrescriptionApp() {
                         : "Enviar al paciente"}
                   </button>
                 </div>
-                {created.record.status !== "cancelled" && (
-                  <div className="signed-pdf-panel compact-status-panel">
-                    <p className="signed-pdf-title">
-                      {created.record.signedPdf
-                        ? "PDF firmado listo"
-                        : "PDF pendiente de firma"}
-                    </p>
-                    {created.record.signedPdf && (
-                      <span>{created.record.signedPdf.fileName}</span>
-                    )}
-                    {autoSignStatus && (
-                      <p className="signature-inline-status">{autoSignStatus}</p>
-                    )}
-                    {patientSendStatus && (
-                      <p className="signature-inline-status">
-                        {patientSendStatus}
-                      </p>
-                    )}
-                  </div>
+                {created.record.status !== "cancelled" && patientSendStatus && (
+                  <p className="signature-inline-status">{patientSendStatus}</p>
                 )}
                 {created.record.status !== "cancelled" && (
                   <button
@@ -1992,6 +1992,55 @@ export default function PrescriptionApp() {
                   : signatureDialogMode === "sign-existing"
                       ? "Firmar PDF"
                       : "Generar PDF y QR"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {isPatientMessageDialogOpen && (
+        <div className="modal-backdrop">
+          <section
+            aria-labelledby="patient-message-dialog-title"
+            aria-modal="true"
+            className="signature-dialog"
+            role="dialog"
+          >
+            <div>
+              <p className="eyebrow">Mensaje al paciente</p>
+              <h2 id="patient-message-dialog-title">Enviar Mensaje</h2>
+            </div>
+
+            <label className="field">
+              <span>Mensaje</span>
+              <textarea
+                rows={6}
+                value={patientMessageDraft}
+                onChange={(event) => setPatientMessageDraft(event.target.value)}
+              />
+            </label>
+
+            <div className="signature-dialog-actions">
+              <button
+                className="secondary-button"
+                disabled={isSendingPatientPdf}
+                type="button"
+                onClick={() => {
+                  setIsPatientMessageDialogOpen(false);
+                  setPatientMessageTarget(null);
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary-button"
+                disabled={isSendingPatientPdf || !patientMessageDraft.trim()}
+                type="button"
+                onClick={() => {
+                  void sendSignedPdfToPatient();
+                }}
+              >
+                {isSendingPatientPdf ? "Enviando..." : "Enviar Mensaje"}
               </button>
             </div>
           </section>
@@ -2271,6 +2320,36 @@ async function fetchPrescriptionRecord(
   }
 
   return data;
+}
+
+async function readJsonResponse<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    return (await response.json()) as T;
+  }
+
+  const text = await response.text().catch(() => "");
+  const cleanText = text.replace(/\s+/g, " ").trim();
+  const fallbackMessage = response.ok
+    ? "Respuesta inesperada del servidor."
+    : `Error ${response.status} del servidor.`;
+
+  return {
+    errors: [
+      cleanText && !cleanText.startsWith("<!DOCTYPE")
+        ? cleanText.slice(0, 220)
+        : fallbackMessage,
+    ],
+  } as T;
+}
+
+function buildPatientSmsDraft(target: CreatedPrescription) {
+  const patientName = target.record.payload.patient.name.trim();
+  const firstName = patientName.split(/\s+/)[0] || "";
+  const greeting = firstName ? `Hola ${firstName},` : "Hola,";
+
+  return `${greeting} aqui tienes tu receta: ${target.pdfUrl}`;
 }
 
 function mergeGhlContact(

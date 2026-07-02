@@ -1,7 +1,15 @@
 import path from "node:path";
 
 export function getAppDataDir() {
-  return process.env.APP_DATA_DIR?.trim() || path.join(process.cwd(), ".data");
+  const configuredDir = process.env.APP_DATA_DIR?.trim();
+
+  if (configuredDir) {
+    return configuredDir;
+  }
+
+  return process.env.NODE_ENV === "production"
+    ? "/app/.data"
+    : path.join(process.cwd(), ".data");
 }
 
 export function getAppDataPath(...segments: string[]) {

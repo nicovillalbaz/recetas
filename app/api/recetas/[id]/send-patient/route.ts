@@ -29,7 +29,10 @@ export async function POST(
   }
 
   const { id } = await context.params;
-  const body = (await request.json().catch(() => ({}))) as { token?: string };
+  const body = (await request.json().catch(() => ({}))) as {
+    token?: string;
+    message?: string;
+  };
   const record = await getPrescriptionRecord(id);
 
   if (
@@ -65,9 +68,13 @@ export async function POST(
   }
 
   const pdfUrl = buildPrescriptionPdfUrl(record, getPublicOrigin(request));
+  const smsMessage = normalizePatientSmsMessage(
+    body.message || buildPatientSms(record, pdfUrl),
+    pdfUrl,
+  );
 
   try {
-    await sendGhlSmsToContact(record.contactId, buildPatientSms(record, pdfUrl));
+    await sendGhlSmsToContact(record.contactId, smsMessage);
     const updatedRecord = await markPrescriptionSent(record.id, session);
 
     await createGhlContactNote(
@@ -108,6 +115,20 @@ function buildPatientSms(
   const greeting = firstName ? `Hola ${firstName},` : "Hola,";
 
   return `${greeting} aqui tienes tu receta: ${pdfUrl}`;
+}
+
+function normalizePatientSmsMessage(message: string, pdfUrl: string) {
+  const cleanMessage = message.replace(/\s+/g, " ").trim();
+
+  if (!cleanMessage) {
+    return `Hola, aqui tienes tu receta: ${pdfUrl}`;
+  }
+
+  if (cleanMessage.includes(pdfUrl)) {
+    return cleanMessage.slice(0, 1200);
+  }
+
+  return `${cleanMessage} ${pdfUrl}`.slice(0, 1200);
 }
 
 function getPublicOrigin(request: NextRequest) {
