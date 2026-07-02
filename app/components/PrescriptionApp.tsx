@@ -2903,7 +2903,7 @@ function createAutoFirmaVisibleSignatureParams(signatureRubricImageB64 = "") {
     "signaturePositionOnPageLowerLeftX=155",
     "signaturePositionOnPageLowerLeftY=198",
     "signaturePositionOnPageUpperRightX=440",
-    "signaturePositionOnPageUpperRightY=264",
+    "signaturePositionOnPageUpperRightY=282",
     "layer2Text=Firmado digitalmente por $$SUBJECTCN$$\\nFecha: $$SIGNDATE=dd/MM/yyyy HH:mm:ss$$",
     "layer2FontFamily=1",
     "layer2FontSize=8",
